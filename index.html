@@ -450,6 +450,7 @@ const auth = firebase.auth();
 // ============ VARIABLES GLOBALES ============
 let currentUser = null;
 let currentWeddingId = null;
+let pendingInviteCode = null;
 let state = {
     budget: [],
     guests: [],
@@ -475,7 +476,7 @@ let state = {
     isSyncing: false
 };
 
-// ============ INITIALISATION DE LA NAVIGATION ============
+// ============ FONCTIONS DE NAVIGATION ============
 function initNavigation() {
     console.log("🚀 Initialisation de la navigation...");
     
@@ -483,9 +484,7 @@ function initNavigation() {
     console.log(`📌 ${navButtons.length} boutons de navigation trouvés`);
     
     navButtons.forEach(btn => {
-        // Supprimer les anciens écouteurs pour éviter les doublons
         btn.removeEventListener("click", handleNavClick);
-        // Ajouter le nouvel écouteur
         btn.addEventListener("click", handleNavClick);
     });
 }
@@ -496,91 +495,27 @@ function handleNavClick(e) {
     
     console.log(`🖱️ Clic sur navigation vers: ${pageId}`);
     
-    if (!pageId) {
-        console.error("❌ pageId manquant");
-        return;
-    }
+    if (!pageId) return;
     
-    // Mettre à jour les classes actives
     document.querySelectorAll(".nav-link").forEach(n => {
         n.classList.remove("active-link");
     });
     btn.classList.add("active-link");
     
-    // Cacher toutes les pages
     document.querySelectorAll(".page").forEach(page => {
         page.classList.add("hidden");
     });
     
-    // Afficher la page sélectionnée
     const targetPage = document.getElementById(pageId);
     if (targetPage) {
         targetPage.classList.remove("hidden");
-        console.log(`✅ Page ${pageId} affichée`);
-    } else {
-        console.error(`❌ Page ${pageId} non trouvée`);
     }
     
-    // Sur mobile, fermer la sidebar
     if (window.innerWidth < 1024) {
         toggleSidebar();
     }
 }
 
-// ============ FONCTION PRINCIPALE DE RENDU ============
-function renderAll() {
-    console.log("🔄 renderAll() exécuté");
-    
-    renderDashboard();
-    renderBudget();
-    renderGuests();
-    renderTasks();
-    renderTables();
-    renderVendors();
-    renderDocuments();
-    renderLogs();
-    renderNotes();
-    
-    // Mettre à jour les champs de formulaire
-    const coupleNameField = document.getElementById("coupleName");
-    if (coupleNameField) coupleNameField.value = state.wedding?.couple || "";
-    
-    const weddingDateField = document.getElementById("weddingDate");
-    if (weddingDateField) weddingDateField.value = state.wedding?.date || "";
-    
-    const weddingPlaceField = document.getElementById("weddingPlace");
-    if (weddingPlaceField) weddingPlaceField.value = state.wedding?.place || "";
-    
-    const plannerField = document.getElementById("planner");
-    if (plannerField) plannerField.value = state.wedding?.planner || "";
-    
-    const themeSelect = document.getElementById("themeSelect");
-    if (themeSelect) themeSelect.value = state.settings.theme;
-    
-    const globalBudgetField = document.getElementById("globalBudget");
-    if (globalBudgetField) globalBudgetField.value = state.settings.budget;
-    
-    const maxGuestsField = document.getElementById("maxGuests");
-    if (maxGuestsField) maxGuestsField.value = state.settings.maxGuests;
-    
-    const currencyField = document.getElementById("currency");
-    if (currencyField) currencyField.value = state.settings.currency;
-    
-    applyTheme();
-    renderSharedUsers();
-    
-    // Réinitialiser la navigation après chaque rendu
-    initNavigation();
-    
-    // Rafraîchir les icônes Lucide
-    setTimeout(() => {
-        if (typeof lucide !== 'undefined' && lucide.createIcons) {
-            lucide.createIcons();
-        }
-    }, 100);
-}
-
-// ============ FONCTIONS DE NAVIGATION ============
 function toggleSidebar() {
     const sidebar = document.getElementById("sidebar");
     if (sidebar) {
@@ -590,33 +525,318 @@ function toggleSidebar() {
 
 // ============ GESTION DU PARTAGE AVEC CODE ============
 
-// Variable temporaire pour stocker le code saisi avant connexion
-let pendingInviteCode = null;
-
-// Générer un code d'invitation unique
 function generateInviteCode() {
     return Math.random().toString(36).substring(2, 10).toUpperCase();
 }
 
-// Copier le code d'invitation
 function copyInviteCode(code) {
     navigator.clipboard.writeText(code);
     alert("✅ Code copié ! Partagez-le avec votre conjoint(e)");
 }
 
-// Fonction appelée depuis l'écran de connexion
 function joinWeddingWithCodePrompt() {
     const code = prompt("Entrez le code d'invitation partagé par votre conjoint(e) :");
     if (!code) return;
-    
-    // Stocker le code temporairement
     pendingInviteCode = code.toUpperCase();
-    
-    // Déclencher la connexion Google
     signInWithGoogle();
 }
 
-// Version modifiée de signInWithGoogle qui gère le code en attente
+async function getOrCreateWedding() {
+    if (currentWeddingId) return currentWeddingId;
+    
+    const sharesSnapshot = await db.collection("weddingShares")
+        .where("sharedWithId", "==", currentUser.uid)
+        .limit(1)
+        .get();
+    
+    if (!sharesSnapshot.empty) {
+        currentWeddingId = sharesSnapshot.docs[0].data().weddingId;
+        return currentWeddingId;
+    }
+    
+    const weddingSnapshot = await db.collection("weddings")
+        .where("ownerId", "==", currentUser.uid)
+        .limit(1)
+        .get();
+    
+    if (!weddingSnapshot.empty) {
+        currentWeddingId = weddingSnapshot.docs[0].id;
+        return currentWeddingId;
+    }
+    
+    const newWeddingRef = db.collection("weddings").doc();
+    await newWeddingRef.set({
+        ownerId: currentUser.uid,
+        ownerEmail: currentUser.email,
+        ownerName: currentUser.displayName,
+        createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+        inviteCode: generateInviteCode()
+    });
+    
+    await db.collection("weddingShares").doc(`${newWeddingRef.id}_${currentUser.uid}`).set({
+        weddingId: newWeddingRef.id,
+        sharedWithId: currentUser.uid,
+        sharedWithEmail: currentUser.email,
+        sharedWithName: currentUser.displayName,
+        role: "owner",
+        createdAt: firebase.firestore.FieldValue.serverTimestamp()
+    });
+    
+    currentWeddingId = newWeddingRef.id;
+    return currentWeddingId;
+}
+
+async function checkPendingInvites() {
+    const invitesSnapshot = await db.collection("weddingInvites")
+        .where("invitedEmail", "==", currentUser.email)
+        .where("status", "==", "pending")
+        .get();
+    
+    for (const inviteDoc of invitesSnapshot.docs) {
+        const invite = inviteDoc.data();
+        
+        const existingShare = await db.collection("weddingShares")
+            .doc(`${invite.weddingId}_${currentUser.uid}`)
+            .get();
+        
+        if (!existingShare.exists) {
+            await db.collection("weddingShares").doc(`${invite.weddingId}_${currentUser.uid}`).set({
+                weddingId: invite.weddingId,
+                sharedWithId: currentUser.uid,
+                sharedWithEmail: currentUser.email,
+                sharedWithName: currentUser.displayName,
+                role: "editor",
+                joinedAt: firebase.firestore.FieldValue.serverTimestamp()
+            });
+        }
+        
+        await inviteDoc.ref.update({
+            status: "accepted",
+            acceptedAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
+        
+        currentWeddingId = invite.weddingId;
+        alert(`🎉 Vous avez été invité(e) par ${invite.invitedByName} à collaborer sur son planning de mariage !`);
+    }
+}
+
+async function openInviteModal() {
+    if (!currentWeddingId) {
+        await getOrCreateWedding();
+    }
+    
+    const weddingRef = db.collection("weddings").doc(currentWeddingId);
+    const weddingDoc = await weddingRef.get();
+    let inviteCode = weddingDoc.data().inviteCode;
+    
+    if (!inviteCode) {
+        inviteCode = generateInviteCode();
+        await weddingRef.update({ inviteCode: inviteCode });
+    }
+    
+    modal(`
+        <h2 class="text-3xl font-bold">Partager votre planning</h2>
+        <p class="text-slate-500 mt-2">Invitez votre conjoint(e) à collaborer</p>
+        
+        <div class="mt-6 bg-slate-100 rounded-2xl p-6 text-center">
+            <div class="text-sm text-slate-500 mb-2">Code d'invitation unique</div>
+            <div class="text-4xl font-mono font-bold tracking-wider text-[var(--navy)]">${inviteCode}</div>
+            <button onclick="copyInviteCode('${inviteCode}'); closeModal();" class="mt-4 text-sm text-[var(--terracotta)] hover:underline">
+                📋 Copier le code
+            </button>
+        </div>
+        
+        <div class="mt-6 bg-blue-50 rounded-2xl p-4">
+            <div class="text-sm font-semibold text-blue-800 mb-2">📌 Instructions</div>
+            <div class="text-xs text-blue-700 space-y-1">
+                <div>1. Copiez le code ci-dessus</div>
+                <div>2. Envoyez-le à votre conjoint(e) (WhatsApp, SMS, etc.)</div>
+                <div>3. Votre conjoint(e) se connecte et clique sur "J'ai un code d'invitation"</div>
+                <div>4. Il/elle colle le code et accède automatiquement au planning</div>
+            </div>
+        </div>
+        
+        <div class="flex gap-3 mt-8">
+            <button onclick="closeModal()" class="flex-1 bg-slate-200 px-5 py-3 rounded-2xl">Fermer</button>
+        </div>
+    `);
+}
+
+async function renderSharedUsers() {
+    if (!currentWeddingId) return;
+    
+    const sharesSnapshot = await db.collection("weddingShares")
+        .where("weddingId", "==", currentWeddingId)
+        .get();
+    
+    const container = document.getElementById("sharedUsersList");
+    if (!container) return;
+    
+    container.innerHTML = "";
+    
+    for (const shareDoc of sharesSnapshot.docs) {
+        const share = shareDoc.data();
+        
+        const weddingDoc = await db.collection("weddings").doc(currentWeddingId).get();
+        const isOwner = weddingDoc.exists && weddingDoc.data().ownerId === share.sharedWithId;
+        const isCurrentUser = share.sharedWithId === currentUser.uid;
+        
+        container.innerHTML += `
+            <div class="flex items-center justify-between py-1">
+                <div class="flex items-center gap-2">
+                    <span>${share.sharedWithName?.split(' ')[0] || share.sharedWithEmail?.split('@')[0]}</span>
+                    ${isOwner ? '<span class="invite-badge">👑 Propriétaire</span>' : ''}
+                    ${isCurrentUser ? '<span class="invite-badge">👤 Vous</span>' : ''}
+                </div>
+                ${!isOwner && !isCurrentUser ? `<button onclick="removeUser('${share.sharedWithId}')" class="text-red-300 text-xs hover:text-red-100">❌</button>` : ''}
+            </div>
+        `;
+    }
+}
+
+async function removeUser(userId) {
+    if (confirm("Retirer cet utilisateur du planning ?")) {
+        await db.collection("weddingShares").doc(`${currentWeddingId}_${userId}`).delete();
+        await renderSharedUsers();
+        alert("✅ Utilisateur retiré");
+    }
+}
+
+// ============ GESTION DES DONNÉES ============
+
+async function syncToFirebase() {
+    if (!currentUser || !currentWeddingId || state.isSyncing) return;
+    state.isSyncing = true;
+    
+    try {
+        await db.collection("weddings").doc(currentWeddingId).set({
+            budget: state.budget,
+            guests: state.guests,
+            tasks: state.tasks,
+            tables: state.tables,
+            vendors: state.vendors,
+            documents: state.documents,
+            logs: state.logs,
+            notesCollection: state.notesCollection,
+            activeNoteId: state.activeNoteId,
+            settings: state.settings,
+            wedding: state.wedding,
+            lastUpdated: firebase.firestore.FieldValue.serverTimestamp(),
+            updatedBy: currentUser.uid,
+            updatedByName: currentUser.displayName
+        }, { merge: true });
+        
+        console.log("✅ Données sauvegardées");
+    } catch (error) {
+        console.error("❌ Erreur:", error);
+    } finally {
+        state.isSyncing = false;
+    }
+}
+
+async function loadWeddingData() {
+    if (!currentWeddingId) return;
+    
+    try {
+        const docRef = await db.collection("weddings").doc(currentWeddingId).get();
+        
+        if (docRef.exists) {
+            const data = docRef.data();
+            state.budget = data.budget || [];
+            state.guests = data.guests || [];
+            state.tasks = data.tasks || [];
+            state.tables = data.tables || [];
+            state.vendors = data.vendors || [];
+            state.documents = data.documents || [];
+            state.logs = data.logs || [];
+            state.notesCollection = data.notesCollection || [];
+            state.activeNoteId = data.activeNoteId || null;
+            state.settings = data.settings || state.settings;
+            state.wedding = data.wedding || state.wedding;
+            console.log("📀 Données chargées");
+        } else {
+            seedDefaultData();
+            await syncToFirebase();
+        }
+    } catch (error) {
+        console.error("Erreur de chargement:", error);
+        seedDefaultData();
+    }
+}
+
+function listenToWedding() {
+    if (!currentWeddingId) return;
+    
+    db.collection("weddings").doc(currentWeddingId).onSnapshot((doc) => {
+        if (doc.exists && !state.isSyncing) {
+            const data = doc.data();
+            state.isSyncing = true;
+            
+            state.budget = data.budget || [];
+            state.guests = data.guests || [];
+            state.tasks = data.tasks || [];
+            state.tables = data.tables || [];
+            state.vendors = data.vendors || [];
+            state.documents = data.documents || [];
+            state.logs = data.logs || [];
+            state.notesCollection = data.notesCollection || [];
+            state.activeNoteId = data.activeNoteId || null;
+            state.settings = data.settings || state.settings;
+            state.wedding = data.wedding || state.wedding;
+            
+            renderAll();
+            state.isSyncing = false;
+        }
+    }, (error) => {
+        console.error("Erreur d'écoute:", error);
+    });
+}
+
+function seedDefaultData() {
+    state.budget = [
+        {id:1,category:"Salle",planned:2500000,real:2000000,deposit:1000000},
+        {id:2,category:"Traiteur",planned:1800000,real:1500000,deposit:500000},
+        {id:3,category:"Décoration",planned:900000,real:700000,deposit:250000},
+        {id:4,category:"Photo/Vidéo",planned:1200000,real:850000,deposit:350000},
+    ];
+    state.guests = [
+        {id:1,last:"Ntepp",first:"Steve",rsvp:"Confirmé",diet:"Standard",plus:1},
+        {id:2,last:"Anna",first:"Marie",rsvp:"Confirmé",diet:"Végétarien",plus:0},
+        {id:3,last:"Sow",first:"Fatou",rsvp:"En attente",diet:"Halal",plus:1},
+        {id:4,last:"Ba",first:"Ibra",rsvp:"Confirmé",diet:"Standard",plus:2},
+        {id:5,last:"Ngono",first:"Paul",rsvp:"Refusé",diet:"Standard",plus:0},
+        {id:6,last:"Dia",first:"Awa",rsvp:"Confirmé",diet:"Végétarien",plus:0}
+    ];
+    state.tasks = [
+        {id:1,date:"2026-05-20",task:"Réserver salle",owner:"Steve",status:"fait"},
+        {id:2,date:"2026-05-22",task:"Choisir traiteur",owner:"Anna",status:"fait"},
+        {id:3,date:"2026-05-28",task:"Décoration",owner:"Planner",status:"à faire"},
+        {id:4,date:"2026-06-01",task:"Invitations",owner:"Steve",status:"fait"},
+        {id:5,date:"2026-06-05",task:"DJ",owner:"Anna",status:"à faire"},
+        {id:6,date:"2026-06-10",task:"Essayage",owner:"Anna",status:"à faire"},
+        {id:7,date:"2026-06-14",task:"Plan de table",owner:"Planner",status:"à faire"},
+        {id:8,date:"2026-06-18",task:"Répétition",owner:"Steve",status:"à faire"},
+    ];
+    state.tables = [
+        {id:1,name:"Table Famille",capacity:8,guests:[1,2]},
+        {id:2,name:"Table VIP",capacity:6,guests:[4]},
+        {id:3,name:"Table Amis",capacity:10,guests:[3,6]},
+    ];
+    state.vendors = [
+        {id:1,name:"Elite Events",contact:"+22177000000",budget:1200000,status:"Réservé"},
+        {id:2,name:"Royal Flowers",contact:"+22178000000",budget:600000,status:"Contacté"},
+        {id:3,name:"DJ Prestige",contact:"+22176000000",budget:500000,status:"Réservé"},
+        {id:4,name:"Visual Studio",contact:"+22170000000",budget:950000,status:"Réservé"},
+        {id:5,name:"Golden Catering",contact:"+22175000000",budget:1800000,status:"Contacté"},
+    ];
+    state.notesCollection = [
+        {id:1,title:"Checklist mariage",content:"Finaliser le traiteur et les invitations."}
+    ];
+    state.activeNoteId = 1;
+}
+
+// ============ AUTHENTIFICATION ============
+
 async function signInWithGoogle() {
     const provider = new firebase.auth.GoogleAuthProvider();
     provider.setCustomParameters({ prompt: 'select_account' });
@@ -625,12 +845,10 @@ async function signInWithGoogle() {
         currentUser = result.user;
         updateUserUI(currentUser);
         
-        // Vérifier s'il y a un code d'invitation en attente
         if (pendingInviteCode) {
             const code = pendingInviteCode;
             pendingInviteCode = null;
             
-            // Chercher le wedding avec ce code
             const weddingsSnapshot = await db.collection("weddings")
                 .where("inviteCode", "==", code)
                 .limit(1)
@@ -686,54 +904,12 @@ async function signInWithGoogle() {
     }
 }
 
-// Afficher la modale d'invitation avec code
-async function openInviteModal() {
-    if (!currentWeddingId) {
-        await getOrCreateWedding();
-    }
-    
-    const weddingRef = db.collection("weddings").doc(currentWeddingId);
-    const weddingDoc = await weddingRef.get();
-    let inviteCode = weddingDoc.data().inviteCode;
-    
-    if (!inviteCode) {
-        inviteCode = generateInviteCode();
-        await weddingRef.update({ inviteCode: inviteCode });
-    }
-    
-    modal(`
-        <h2 class="text-3xl font-bold">Partager votre planning</h2>
-        <p class="text-slate-500 mt-2">Invitez votre conjoint(e) à collaborer</p>
-        
-        <div class="mt-6 bg-slate-100 rounded-2xl p-6 text-center">
-            <div class="text-sm text-slate-500 mb-2">Code d'invitation unique</div>
-            <div class="text-4xl font-mono font-bold tracking-wider text-[var(--navy)]">${inviteCode}</div>
-            <button onclick="copyInviteCode('${inviteCode}'); closeModal();" class="mt-4 text-sm text-[var(--terracotta)] hover:underline">
-                📋 Copier le code
-            </button>
-        </div>
-        
-        <div class="mt-6 bg-blue-50 rounded-2xl p-4">
-            <div class="text-sm font-semibold text-blue-800 mb-2">📌 Instructions</div>
-            <div class="text-xs text-blue-700 space-y-1">
-                <div>1. Copiez le code ci-dessus</div>
-                <div>2. Envoyez-le à votre conjoint(e) (WhatsApp, SMS, etc.)</div>
-                <div>3. Votre conjoint(e) se connecte et clique sur "J'ai un code d'invitation"</div>
-                <div>4. Il/elle colle le code et accède automatiquement au planning</div>
-            </div>
-        </div>
-        
-        <div class="flex gap-3 mt-8">
-            <button onclick="closeModal()" class="flex-1 bg-slate-200 px-5 py-3 rounded-2xl">Fermer</button>
-        </div>
-    `);
-}
-
 async function signOut() {
     try {
         await auth.signOut();
         currentUser = null;
         currentWeddingId = null;
+        pendingInviteCode = null;
         showLoginScreen(true);
     } catch (error) {
         console.error("Erreur de déconnexion:", error);
@@ -776,12 +952,6 @@ function updateUserUI(user) {
 }
 
 // ============ FONCTIONS UTILITAIRES ============
-function toggleSidebar() {
-    const sidebar = document.getElementById("sidebar");
-    if (sidebar) {
-        sidebar.classList.toggle("-translate-x-full");
-    }
-}
 
 function currency(n) {
     return Number(n || 0).toLocaleString() + " " + state.settings.currency;
@@ -858,7 +1028,7 @@ function renderBudget() {
     if (!tbody) return;
     tbody.innerHTML = "";
     state.budget.forEach(item => {
-        tbody.innerHTML += `<tr class="border-b"><td class="py-4">${item.category}</td><td>${currency(item.planned)}</td><td>${currency(item.real)}</td><td>${currency(item.deposit)}</td><td>${currency(item.real - item.deposit)}</td><td class="flex gap-2 py-3"><button onclick="deleteBudget(${item.id})" class="bg-red-100 text-red-600 px-3 py-2 rounded-xl">Supprimer</button></td></tr>`;
+        tbody.innerHTML += `<tr class="border-b"><td class="py-4">${item.category}</td><td>${currency(item.planned)}</td><td>${currency(item.real)}</td><td>${currency(item.deposit)}</td><td>${currency(item.real - item.deposit)}</td><td class="flex gap-2 py-3"><button onclick="deleteBudget(${item.id})" class="bg-red-100 text-red-600 px-3 py-2 rounded-xl">Supprimer</button>↖</tr>`;
     });
 }
 
@@ -867,7 +1037,7 @@ function renderGuests() {
     if (!tbody) return;
     tbody.innerHTML = "";
     state.guests.forEach(g => {
-        tbody.innerHTML += `<tr class="border-b"><td class="py-4">${g.last}</td><td>${g.first}</td><td>${g.rsvp}</td><td>${g.diet}</td><td>${g.plus}</td><td class="py-3"><button onclick="deleteGuest(${g.id})" class="bg-red-100 text-red-600 px-3 py-2 rounded-xl">Supprimer</button></td></tr>`;
+        tbody.innerHTML += `<tr class="border-b"><td class="py-4">${g.last}</td><td>${g.first}</td><td>${g.rsvp}</td><td>${g.diet}</td><td>${g.plus}</td><td class="py-3"><button onclick="deleteGuest(${g.id})" class="bg-red-100 text-red-600 px-3 py-2 rounded-xl">Supprimer</button>↖</tr>`;
     });
 }
 
@@ -876,7 +1046,7 @@ function renderTasks() {
     if (!tbody) return;
     tbody.innerHTML = "";
     state.tasks.forEach(t => {
-        tbody.innerHTML += `<tr class="border-b"><td class="py-4">${t.date}</td><td>${t.task}</td><td>${t.owner}</td><td><span class="px-3 py-1 rounded-full ${t.status === "fait" ? "bg-emerald-100 text-emerald-700" : "bg-orange-100 text-orange-700"}">${t.status}</span></td><td class="flex gap-2 py-3"><button onclick="toggleTask(${t.id})" class="bg-slate-100 px-3 py-2 rounded-xl">Toggle</button><button onclick="deleteTask(${t.id})" class="bg-red-100 text-red-600 px-3 py-2 rounded-xl">Supprimer</button></td></tr>`;
+        tbody.innerHTML += `<tr class="border-b"><td class="py-4">${t.date}</td><td>${t.task}</td><td>${t.owner}</td><td><span class="px-3 py-1 rounded-full ${t.status === "fait" ? "bg-emerald-100 text-emerald-700" : "bg-orange-100 text-orange-700"}">${t.status}</span></td><td class="flex gap-2 py-3"><button onclick="toggleTask(${t.id})" class="bg-slate-100 px-3 py-2 rounded-xl">Toggle</button><button onclick="deleteTask(${t.id})" class="bg-red-100 text-red-600 px-3 py-2 rounded-xl">Supprimer</button>↖</tr>`;
     });
 }
 
@@ -941,6 +1111,52 @@ function renderNotes() {
     }
 }
 
+function renderAll() {
+    renderDashboard();
+    renderBudget();
+    renderGuests();
+    renderTasks();
+    renderTables();
+    renderVendors();
+    renderDocuments();
+    renderLogs();
+    renderNotes();
+    
+    const coupleNameField = document.getElementById("coupleName");
+    if (coupleNameField) coupleNameField.value = state.wedding?.couple || "";
+    
+    const weddingDateField = document.getElementById("weddingDate");
+    if (weddingDateField) weddingDateField.value = state.wedding?.date || "";
+    
+    const weddingPlaceField = document.getElementById("weddingPlace");
+    if (weddingPlaceField) weddingPlaceField.value = state.wedding?.place || "";
+    
+    const plannerField = document.getElementById("planner");
+    if (plannerField) plannerField.value = state.wedding?.planner || "";
+    
+    const themeSelect = document.getElementById("themeSelect");
+    if (themeSelect) themeSelect.value = state.settings.theme;
+    
+    const globalBudgetField = document.getElementById("globalBudget");
+    if (globalBudgetField) globalBudgetField.value = state.settings.budget;
+    
+    const maxGuestsField = document.getElementById("maxGuests");
+    if (maxGuestsField) maxGuestsField.value = state.settings.maxGuests;
+    
+    const currencyField = document.getElementById("currency");
+    if (currencyField) currencyField.value = state.settings.currency;
+    
+    applyTheme();
+    renderSharedUsers();
+    initNavigation();
+    
+    setTimeout(() => {
+        if (typeof lucide !== 'undefined' && lucide.createIcons) {
+            lucide.createIcons();
+        }
+    }, 100);
+}
+
 function applyTheme() {
     if (state.settings.theme === "terracotta") {
         document.body.classList.add("theme-terracotta");
@@ -961,7 +1177,7 @@ function closeModal() {
     if (modalContainer) modalContainer.innerHTML = "";
 }
 
-// ============ MODALS ET CRUD ============
+// ============ CRUD BUDGET ============
 
 function openBudgetModal() {
     modal(`<h2 class="text-3xl font-bold">Ajouter budget</h2><div class="space-y-4 mt-6"><input id="bCategory" class="w-full border rounded-2xl px-4 py-3" placeholder="Catégorie"/><input id="bPlanned" type="number" class="w-full border rounded-2xl px-4 py-3" placeholder="Prévu"/><input id="bReal" type="number" class="w-full border rounded-2xl px-4 py-3" placeholder="Réel"/><input id="bDeposit" type="number" class="w-full border rounded-2xl px-4 py-3" placeholder="Acompte"/></div><div class="flex gap-3 mt-8"><button onclick="addBudget()" class="bg-[var(--terracotta)] text-white px-5 py-3 rounded-2xl">Ajouter</button><button onclick="closeModal()" class="bg-slate-200 px-5 py-3 rounded-2xl">Annuler</button></div>`);
@@ -987,6 +1203,8 @@ function deleteBudget(id) {
     renderAll();
 }
 
+// ============ CRUD GUESTS ============
+
 function openGuestModal() {
     modal(`<h2 class="text-3xl font-bold">Ajouter invité</h2><div class="space-y-4 mt-6"><input id="gLast" class="w-full border rounded-2xl px-4 py-3" placeholder="Nom"/><input id="gFirst" class="w-full border rounded-2xl px-4 py-3" placeholder="Prénom"/><select id="gRsvp" class="w-full border rounded-2xl px-4 py-3"><option>Confirmé</option><option>En attente</option><option>Refusé</option></select><input id="gDiet" class="w-full border rounded-2xl px-4 py-3" placeholder="Régime"/></div><div class="flex gap-3 mt-8"><button onclick="addGuest()" class="bg-[var(--terracotta)] text-white px-5 py-3 rounded-2xl">Ajouter</button><button onclick="closeModal()" class="bg-slate-200 px-5 py-3 rounded-2xl">Annuler</button></div>`);
 }
@@ -1011,6 +1229,8 @@ function deleteGuest(id) {
     saveState();
     renderAll();
 }
+
+// ============ CRUD TASKS ============
 
 function openTaskModal() {
     modal(`<h2 class="text-3xl font-bold">Nouvelle tâche</h2><div class="space-y-4 mt-6"><input id="tDate" type="date" class="w-full border rounded-2xl px-4 py-3"/><input id="tTask" class="w-full border rounded-2xl px-4 py-3" placeholder="Tâche"/><input id="tOwner" class="w-full border rounded-2xl px-4 py-3" placeholder="Responsable"/></div><div class="flex gap-3 mt-8"><button onclick="addTask()" class="bg-[var(--terracotta)] text-white px-5 py-3 rounded-2xl">Ajouter</button><button onclick="closeModal()" class="bg-slate-200 px-5 py-3 rounded-2xl">Annuler</button></div>`);
@@ -1042,6 +1262,8 @@ function deleteTask(id) {
     saveState();
     renderAll();
 }
+
+// ============ CRUD TABLES ============
 
 function openTableModal() {
     modal(`<h2 class="text-3xl font-bold">Nouvelle table</h2><div class="space-y-4 mt-6"><input id="tableName" class="w-full border rounded-2xl px-4 py-3" placeholder="Nom"/><input id="tableCapacity" type="number" class="w-full border rounded-2xl px-4 py-3" placeholder="Capacité"/></div><div class="flex gap-3 mt-8"><button onclick="addTable()" class="bg-[var(--terracotta)] text-white px-5 py-3 rounded-2xl">Ajouter</button><button onclick="closeModal()" class="bg-slate-200 px-5 py-3 rounded-2xl">Annuler</button></div>`);
@@ -1075,6 +1297,8 @@ function deleteTable(id) {
     renderAll();
 }
 
+// ============ CRUD VENDORS ============
+
 function openVendorModal() {
     modal(`<h2 class="text-3xl font-bold">Ajouter prestataire</h2><div class="space-y-4 mt-6"><input id="vName" class="w-full border rounded-2xl px-4 py-3" placeholder="Nom"/><input id="vContact" class="w-full border rounded-2xl px-4 py-3" placeholder="Contact"/><input id="vBudget" type="number" class="w-full border rounded-2xl px-4 py-3" placeholder="Budget"/><select id="vStatus" class="w-full border rounded-2xl px-4 py-3"><option>Contacté</option><option>Réservé</option></select></div><div class="flex gap-3 mt-8"><button onclick="addVendor()" class="bg-[var(--terracotta)] text-white px-5 py-3 rounded-2xl">Ajouter</button><button onclick="closeModal()" class="bg-slate-200 px-5 py-3 rounded-2xl">Annuler</button></div>`);
 }
@@ -1097,6 +1321,8 @@ function deleteVendor(id) {
     saveState();
     renderAll();
 }
+
+// ============ CRUD DOCUMENTS ============
 
 function openDocumentModal() {
     modal(`<h2 class="text-3xl font-bold">Uploader document</h2><div class="space-y-4 mt-6"><input id="dName" class="w-full border rounded-2xl px-4 py-3" placeholder="Nom document"/><select id="dType" class="w-full border rounded-2xl px-4 py-3"><option>Contrat</option><option>Devis</option><option>Moodboard</option></select><input type="file" id="dFile" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png" class="w-full border rounded-2xl px-4 py-3"/></div><div class="flex gap-3 mt-8"><button onclick="addDocument()" class="bg-[var(--terracotta)] text-white px-5 py-3 rounded-2xl">Ajouter</button><button onclick="closeModal()" class="bg-slate-200 px-5 py-3 rounded-2xl">Annuler</button></div>`);
@@ -1152,6 +1378,8 @@ function deleteDocument(id) {
     renderAll();
 }
 
+// ============ NOTES ============
+
 function openNewNoteModal() {
     modal(`<h2 class="text-3xl font-bold">Nouvelle note</h2><div class="space-y-4 mt-6"><input id="newNoteTitle" class="w-full border rounded-2xl px-4 py-3" placeholder="Titre"/></div><div class="flex gap-3 mt-8"><button onclick="createNote()" class="bg-[var(--terracotta)] text-white px-5 py-3 rounded-2xl">Créer</button><button onclick="closeModal()" class="bg-slate-200 px-5 py-3 rounded-2xl">Annuler</button></div>`);
 }
@@ -1194,6 +1422,8 @@ document.addEventListener("input", function(e) {
     }
 });
 
+// ============ SAVE FUNCTIONS ============
+
 function saveWeddingInfo() {
     state.wedding = {
         couple: document.getElementById("coupleName").value,
@@ -1218,7 +1448,7 @@ function saveSettings() {
     alert("Paramètres sauvegardés");
 }
 
-// CSV Import
+// ============ CSV IMPORT ============
 document.getElementById("csvFile")?.addEventListener("change", function(e) {
     const file = e.target.files[0];
     if (!file) return;
@@ -1244,7 +1474,8 @@ document.getElementById("csvFile")?.addEventListener("change", function(e) {
     });
 });
 
-// Exports
+// ============ EXPORTS ============
+
 function exportBudgetCSV() {
     const ws = XLSX.utils.json_to_sheet(state.budget);
     const wb = XLSX.utils.book_new();
@@ -1306,11 +1537,56 @@ auth.onAuthStateChanged(async (user) => {
     if (user) {
         currentUser = user;
         updateUserUI(currentUser);
-        await getOrCreateWedding();
-        await checkPendingInvites();
-        await loadWeddingData();
-        await renderSharedUsers();
-        listenToWedding();
+        
+        if (pendingInviteCode) {
+            const code = pendingInviteCode;
+            pendingInviteCode = null;
+            
+            const weddingsSnapshot = await db.collection("weddings")
+                .where("inviteCode", "==", code)
+                .limit(1)
+                .get();
+            
+            if (!weddingsSnapshot.empty) {
+                const wedding = weddingsSnapshot.docs[0];
+                const weddingId = wedding.id;
+                
+                const existingShare = await db.collection("weddingShares")
+                    .doc(`${weddingId}_${currentUser.uid}`)
+                    .get();
+                
+                if (!existingShare.exists) {
+                    await db.collection("weddingShares").doc(`${weddingId}_${currentUser.uid}`).set({
+                        weddingId: weddingId,
+                        sharedWithId: currentUser.uid,
+                        sharedWithEmail: currentUser.email,
+                        sharedWithName: currentUser.displayName,
+                        role: "editor",
+                        joinedAt: firebase.firestore.FieldValue.serverTimestamp()
+                    });
+                }
+                
+                currentWeddingId = weddingId;
+                await loadWeddingData();
+                await renderSharedUsers();
+                listenToWedding();
+                
+                alert("✅ Félicitations ! Vous avez rejoint le planning de mariage !");
+            } else {
+                await getOrCreateWedding();
+                await loadWeddingData();
+                await renderSharedUsers();
+                listenToWedding();
+                alert("❌ Code invalide. Un nouveau planning a été créé pour vous.\n\nContactez votre conjoint(e) pour obtenir le bon code d'invitation.");
+            }
+        } else {
+            await getOrCreateWedding();
+            await checkPendingInvites();
+            await loadWeddingData();
+            await renderSharedUsers();
+            listenToWedding();
+        }
+        
         showLoginScreen(false);
         renderAll();
         logAction(`${currentUser.displayName || currentUser.email} a ouvert l'application`);
