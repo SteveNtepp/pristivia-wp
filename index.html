@@ -475,6 +475,119 @@ let state = {
     isSyncing: false
 };
 
+// ============ INITIALISATION DE LA NAVIGATION ============
+function initNavigation() {
+    console.log("🚀 Initialisation de la navigation...");
+    
+    const navButtons = document.querySelectorAll(".nav-link");
+    console.log(`📌 ${navButtons.length} boutons de navigation trouvés`);
+    
+    navButtons.forEach(btn => {
+        // Supprimer les anciens écouteurs pour éviter les doublons
+        btn.removeEventListener("click", handleNavClick);
+        // Ajouter le nouvel écouteur
+        btn.addEventListener("click", handleNavClick);
+    });
+}
+
+function handleNavClick(e) {
+    const btn = e.currentTarget;
+    const pageId = btn.dataset.page;
+    
+    console.log(`🖱️ Clic sur navigation vers: ${pageId}`);
+    
+    if (!pageId) {
+        console.error("❌ pageId manquant");
+        return;
+    }
+    
+    // Mettre à jour les classes actives
+    document.querySelectorAll(".nav-link").forEach(n => {
+        n.classList.remove("active-link");
+    });
+    btn.classList.add("active-link");
+    
+    // Cacher toutes les pages
+    document.querySelectorAll(".page").forEach(page => {
+        page.classList.add("hidden");
+    });
+    
+    // Afficher la page sélectionnée
+    const targetPage = document.getElementById(pageId);
+    if (targetPage) {
+        targetPage.classList.remove("hidden");
+        console.log(`✅ Page ${pageId} affichée`);
+    } else {
+        console.error(`❌ Page ${pageId} non trouvée`);
+    }
+    
+    // Sur mobile, fermer la sidebar
+    if (window.innerWidth < 1024) {
+        toggleSidebar();
+    }
+}
+
+// ============ FONCTION PRINCIPALE DE RENDU ============
+function renderAll() {
+    console.log("🔄 renderAll() exécuté");
+    
+    renderDashboard();
+    renderBudget();
+    renderGuests();
+    renderTasks();
+    renderTables();
+    renderVendors();
+    renderDocuments();
+    renderLogs();
+    renderNotes();
+    
+    // Mettre à jour les champs de formulaire
+    const coupleNameField = document.getElementById("coupleName");
+    if (coupleNameField) coupleNameField.value = state.wedding?.couple || "";
+    
+    const weddingDateField = document.getElementById("weddingDate");
+    if (weddingDateField) weddingDateField.value = state.wedding?.date || "";
+    
+    const weddingPlaceField = document.getElementById("weddingPlace");
+    if (weddingPlaceField) weddingPlaceField.value = state.wedding?.place || "";
+    
+    const plannerField = document.getElementById("planner");
+    if (plannerField) plannerField.value = state.wedding?.planner || "";
+    
+    const themeSelect = document.getElementById("themeSelect");
+    if (themeSelect) themeSelect.value = state.settings.theme;
+    
+    const globalBudgetField = document.getElementById("globalBudget");
+    if (globalBudgetField) globalBudgetField.value = state.settings.budget;
+    
+    const maxGuestsField = document.getElementById("maxGuests");
+    if (maxGuestsField) maxGuestsField.value = state.settings.maxGuests;
+    
+    const currencyField = document.getElementById("currency");
+    if (currencyField) currencyField.value = state.settings.currency;
+    
+    applyTheme();
+    renderSharedUsers();
+    
+    // Réinitialiser la navigation après chaque rendu
+    initNavigation();
+    
+    // Rafraîchir les icônes Lucide
+    setTimeout(() => {
+        if (typeof lucide !== 'undefined' && lucide.createIcons) {
+            lucide.createIcons();
+        }
+    }, 100);
+}
+
+// ============ FONCTIONS DE NAVIGATION ============
+function toggleSidebar() {
+    const sidebar = document.getElementById("sidebar");
+    if (sidebar) {
+        sidebar.classList.toggle("-translate-x-full");
+    }
+}
+
 // ============ GESTION DU PARTAGE AVEC CODE ============
 
 // Générer un code d'invitation unique
@@ -500,7 +613,6 @@ async function joinWeddingWithCode(code) {
     if (!code) return;
     
     try {
-        // Chercher le wedding avec ce code
         const weddingsSnapshot = await db.collection("weddings")
             .where("inviteCode", "==", code)
             .limit(1)
@@ -514,7 +626,6 @@ async function joinWeddingWithCode(code) {
         const wedding = weddingsSnapshot.docs[0];
         const weddingId = wedding.id;
         
-        // Vérifier si déjà partagé
         const existingShare = await db.collection("weddingShares")
             .doc(`${weddingId}_${currentUser.uid}`)
             .get();
@@ -529,7 +640,6 @@ async function joinWeddingWithCode(code) {
             return true;
         }
         
-        // Ajouter le partage
         await db.collection("weddingShares").doc(`${weddingId}_${currentUser.uid}`).set({
             weddingId: weddingId,
             sharedWithId: currentUser.uid,
@@ -557,6 +667,10 @@ async function joinWeddingWithCode(code) {
 
 // Afficher la modale d'invitation avec code
 async function openInviteModal() {
+    if (!currentWeddingId) {
+        await getOrCreateWedding();
+    }
+    
     const weddingRef = db.collection("weddings").doc(currentWeddingId);
     const weddingDoc = await weddingRef.get();
     let inviteCode = weddingDoc.data().inviteCode;
@@ -586,14 +700,6 @@ async function openInviteModal() {
                 <div>3. Votre conjoint(e) se connecte et clique sur "J'ai un code d'invitation"</div>
                 <div>4. Il/elle colle le code et accède automatiquement au planning</div>
             </div>
-        </div>
-        
-        <div class="mt-6">
-            <label class="block text-sm font-medium mb-2">Ou ajouter par email (recommandé pour les invités existants)</label>
-            <input id="inviteEmail" type="email" class="w-full border rounded-2xl px-4 py-3" placeholder="Email du conjoint"/>
-            <button onclick="addUserByEmail(document.getElementById('inviteEmail').value)" class="mt-3 w-full bg-[var(--terracotta)] text-white px-5 py-3 rounded-2xl">
-                Ajouter par email
-            </button>
         </div>
         
         <div class="flex gap-3 mt-8">
@@ -637,7 +743,6 @@ async function checkPendingInvites() {
     for (const inviteDoc of invitesSnapshot.docs) {
         const invite = inviteDoc.data();
         
-        // Vérifier si déjà partagé
         const existingShare = await db.collection("weddingShares")
             .doc(`${invite.weddingId}_${currentUser.uid}`)
             .get();
@@ -673,12 +778,13 @@ async function renderSharedUsers() {
         .get();
     
     const container = document.getElementById("sharedUsersList");
+    if (!container) return;
+    
     container.innerHTML = "";
     
     for (const shareDoc of sharesSnapshot.docs) {
         const share = shareDoc.data();
         
-        // Récupérer si c'est le propriétaire
         const weddingDoc = await db.collection("weddings").doc(currentWeddingId).get();
         const isOwner = weddingDoc.exists && weddingDoc.data().ownerId === share.sharedWithId;
         const isCurrentUser = share.sharedWithId === currentUser.uid;
@@ -711,7 +817,6 @@ async function removeUser(userId) {
 async function getOrCreateWedding() {
     if (currentWeddingId) return currentWeddingId;
     
-    // Chercher si l'utilisateur est déjà dans un partage
     const sharesSnapshot = await db.collection("weddingShares")
         .where("sharedWithId", "==", currentUser.uid)
         .limit(1)
@@ -722,7 +827,6 @@ async function getOrCreateWedding() {
         return currentWeddingId;
     }
     
-    // Chercher si l'utilisateur est propriétaire d'un mariage
     const weddingSnapshot = await db.collection("weddings")
         .where("ownerId", "==", currentUser.uid)
         .limit(1)
@@ -733,7 +837,6 @@ async function getOrCreateWedding() {
         return currentWeddingId;
     }
     
-    // Créer un nouveau mariage
     const newWeddingRef = db.collection("weddings").doc();
     await newWeddingRef.set({
         ownerId: currentUser.uid,
@@ -743,7 +846,6 @@ async function getOrCreateWedding() {
         inviteCode: generateInviteCode()
     });
     
-    // Créer le lien propriétaire
     await db.collection("weddingShares").doc(`${newWeddingRef.id}_${currentUser.uid}`).set({
         weddingId: newWeddingRef.id,
         sharedWithId: currentUser.uid,
@@ -933,114 +1035,568 @@ async function signOut() {
 }
 
 function showLoginScreen(show) {
-    document.getElementById("loginScreen").style.display = show ? "flex" : "none";
-    document.getElementById("appContent").style.display = show ? "none" : "block";
+    const loginScreen = document.getElementById("loginScreen");
+    const appContent = document.getElementById("appContent");
+    
+    if (loginScreen) loginScreen.style.display = show ? "flex" : "none";
+    if (appContent) appContent.style.display = show ? "none" : "block";
+    
+    if (!show) {
+        setTimeout(() => {
+            initNavigation();
+        }, 100);
+    }
 }
 
 function updateUserUI(user) {
     if (!user) return;
     const userName = user.displayName || user.email;
     const userAvatar = user.photoURL || `https://ui-avatars.com/api/?name=${encodeURIComponent(userName)}&background=E2725B&color=fff`;
-    document.getElementById("userName").innerText = userName;
-    document.getElementById("userAvatar").src = userAvatar;
-    document.getElementById("headerUserName").innerText = userName;
-    document.getElementById("headerUserEmail").innerText = user.email;
-    document.getElementById("headerAvatar").src = userAvatar;
+    
+    const userNameEl = document.getElementById("userName");
+    if (userNameEl) userNameEl.innerText = userName;
+    
+    const userAvatarEl = document.getElementById("userAvatar");
+    if (userAvatarEl) userAvatarEl.src = userAvatar;
+    
+    const headerUserNameEl = document.getElementById("headerUserName");
+    if (headerUserNameEl) headerUserNameEl.innerText = userName;
+    
+    const headerUserEmailEl = document.getElementById("headerUserEmail");
+    if (headerUserEmailEl) headerUserEmailEl.innerText = user.email;
+    
+    const headerAvatarEl = document.getElementById("headerAvatar");
+    if (headerAvatarEl) headerAvatarEl.src = userAvatar;
 }
 
 // ============ FONCTIONS UTILITAIRES ============
-function toggleSidebar(){ document.getElementById("sidebar").classList.toggle("-translate-x-full"); }
-function currency(n){ return Number(n || 0).toLocaleString() + " " + state.settings.currency; }
-function saveState() { syncToFirebase(); }
-function logAction(action){ state.logs.unshift({text: action, date: new Date().toLocaleString()}); state.logs = state.logs.slice(0,20); saveState(); renderLogs(); }
+function toggleSidebar() {
+    const sidebar = document.getElementById("sidebar");
+    if (sidebar) {
+        sidebar.classList.toggle("-translate-x-full");
+    }
+}
 
-function renderDashboard(){
+function currency(n) {
+    return Number(n || 0).toLocaleString() + " " + state.settings.currency;
+}
+
+function saveState() {
+    syncToFirebase();
+}
+
+function logAction(action) {
+    state.logs.unshift({text: action, date: new Date().toLocaleString()});
+    state.logs = state.logs.slice(0,20);
+    saveState();
+    renderLogs();
+}
+
+function renderDashboard() {
     const totalTasks = state.tasks.length;
-    const done = state.tasks.filter(t=>t.status==="fait").length;
+    const done = state.tasks.filter(t => t.status === "fait").length;
     const configuredBudget = Number(state.settings.budget || 0);
-    const spent = state.budget.reduce((a,b)=>a+b.real,0);
-    const confirmed = state.guests.filter(g=>g.rsvp==="Confirmé").length;
-    document.getElementById("kpiTasks").innerText = `${done}/${totalTasks}`;
-    document.getElementById("kpiBudget").innerText = currency(configuredBudget - spent);
-    document.getElementById("kpiGuests").innerText = `${confirmed}/${state.guests.length}`;
-    const percent = Math.round((done/totalTasks)*100 || 0);
-    document.getElementById("progressPercent").innerText = percent + "%";
-    document.getElementById("progressBar").style.width = percent + "%";
+    const spent = state.budget.reduce((a, b) => a + b.real, 0);
+    const confirmed = state.guests.filter(g => g.rsvp === "Confirmé").length;
+    
+    const kpiTasksEl = document.getElementById("kpiTasks");
+    if (kpiTasksEl) kpiTasksEl.innerText = `${done}/${totalTasks}`;
+    
+    const kpiBudgetEl = document.getElementById("kpiBudget");
+    if (kpiBudgetEl) kpiBudgetEl.innerText = currency(configuredBudget - spent);
+    
+    const kpiGuestsEl = document.getElementById("kpiGuests");
+    if (kpiGuestsEl) kpiGuestsEl.innerText = `${confirmed}/${state.guests.length}`;
+    
+    const percent = Math.round((done / totalTasks) * 100 || 0);
+    
+    const progressPercentEl = document.getElementById("progressPercent");
+    if (progressPercentEl) progressPercentEl.innerText = percent + "%";
+    
+    const progressBarEl = document.getElementById("progressBar");
+    if (progressBarEl) progressBarEl.style.width = percent + "%";
+    
     renderCharts();
 }
 
-function renderCharts(){
-    const budgetLabels = state.budget.map(b=>b.category);
-    const budgetValues = state.budget.map(b=>b.real);
-    if(window.budgetChartInstance) window.budgetChartInstance.destroy();
-    if(window.tasksChartInstance) window.tasksChartInstance.destroy();
-    window.budgetChartInstance = new Chart(document.getElementById("budgetChart"), { type:"pie", data:{labels:budgetLabels, datasets:[{data:budgetValues}]} });
-    const done = state.tasks.filter(t=>t.status==="fait").length;
+function renderCharts() {
+    const budgetLabels = state.budget.map(b => b.category);
+    const budgetValues = state.budget.map(b => b.real);
+    
+    const budgetChartCanvas = document.getElementById("budgetChart");
+    const tasksChartCanvas = document.getElementById("tasksChart");
+    
+    if (window.budgetChartInstance) window.budgetChartInstance.destroy();
+    if (window.tasksChartInstance) window.tasksChartInstance.destroy();
+    
+    if (budgetChartCanvas && typeof Chart !== 'undefined') {
+        window.budgetChartInstance = new Chart(budgetChartCanvas, {
+            type: "pie",
+            data: {labels: budgetLabels, datasets: [{data: budgetValues}]}
+        });
+    }
+    
+    const done = state.tasks.filter(t => t.status === "fait").length;
     const todo = state.tasks.length - done;
-    window.tasksChartInstance = new Chart(document.getElementById("tasksChart"), { type:"bar", data:{labels:["Terminées","À faire"], datasets:[{label:"Tâches", data:[done,todo]}]} });
+    
+    if (tasksChartCanvas && typeof Chart !== 'undefined') {
+        window.tasksChartInstance = new Chart(tasksChartCanvas, {
+            type: "bar",
+            data: {labels: ["Terminées", "À faire"], datasets: [{label: "Tâches", data: [done, todo]}]}
+        });
+    }
 }
 
-function renderBudget(){ const tbody = document.getElementById("budgetTable"); tbody.innerHTML = ""; state.budget.forEach(item=>{ tbody.innerHTML += `<tr class="border-b"><td class="py-4">${item.category}</td><td>${currency(item.planned)}</td><td>${currency(item.real)}</td><td>${currency(item.deposit)}</td><td>${currency(item.real-item.deposit)}</td><td class="flex gap-2 py-3"><button onclick="deleteBudget(${item.id})" class="bg-red-100 text-red-600 px-3 py-2 rounded-xl">Supprimer</button></td></tr>`; }); }
-function renderGuests(){ const tbody = document.getElementById("guestTable"); tbody.innerHTML = ""; state.guests.forEach(g=>{ tbody.innerHTML += `<tr class="border-b"><td class="py-4">${g.last}</td><td>${g.first}</td><td>${g.rsvp}</td><td>${g.diet}</td><td>${g.plus}</td><td class="py-3"><button onclick="deleteGuest(${g.id})" class="bg-red-100 text-red-600 px-3 py-2 rounded-xl">Supprimer</button></td></tr>`; }); }
-function renderTasks(){ const tbody = document.getElementById("taskTable"); tbody.innerHTML = ""; state.tasks.forEach(t=>{ tbody.innerHTML += `<tr class="border-b"><td class="py-4">${t.date}</td><td>${t.task}</td><td>${t.owner}</td><td><span class="px-3 py-1 rounded-full ${t.status==="fait" ? "bg-emerald-100 text-emerald-700" : "bg-orange-100 text-orange-700"}">${t.status}</span></td><td class="flex gap-2 py-3"><button onclick="toggleTask(${t.id})" class="bg-slate-100 px-3 py-2 rounded-xl">Toggle</button><button onclick="deleteTask(${t.id})" class="bg-red-100 text-red-600 px-3 py-2 rounded-xl">Supprimer</button></td></tr>`; }); }
-function renderTables(){ const container = document.getElementById("tablesContainer"); container.innerHTML = ""; state.tables.forEach(table=>{ const guestNames = table.guests.map(id=>{ const g = state.guests.find(x=>x.id===id); return g ? g.first + " " + g.last : ""; }); container.innerHTML += `<div class="card p-6"><div class="flex justify-between items-start"><div><h3 class="text-2xl font-bold">${table.name}</h3><p class="text-slate-500 mt-1">${table.guests.length}/${table.capacity}</p></div><button onclick="deleteTable(${table.id})" class="text-red-500">✕</button></div><div class="mt-5 flex flex-wrap gap-2">${guestNames.map(n=>`<span class="bg-slate-100 px-3 py-2 rounded-xl text-sm">${n}</span>`).join("")}</div><select onchange="assignGuest(${table.id},this.value)" class="mt-5 w-full border rounded-xl px-3 py-3"><option value="">Ajouter un invité</option>${state.guests.map(g=>`<option value="${g.id}">${g.first} ${g.last}</option>`).join("")}</select></div>`; }); }
-function renderVendors(){ const grid = document.getElementById("vendorsGrid"); grid.innerHTML = ""; state.vendors.forEach(v=>{ grid.innerHTML += `<div class="card p-6"><div class="flex justify-between"><div><h3 class="text-2xl font-bold">${v.name}</h3><p class="text-slate-500 mt-2">${v.contact}</p></div><button onclick="deleteVendor(${v.id})" class="text-red-500">✕</button></div><div class="mt-5 space-y-3"><div class="flex justify-between"><span>Budget</span><strong>${currency(v.budget)}</strong></div><div class="flex justify-between"><span>Statut</span><span>${v.status}</span></div></div></div>`; }); }
-function renderDocuments(){ const grid = document.getElementById("documentsGrid"); const search = document.getElementById("docSearch").value.toLowerCase(); grid.innerHTML = ""; state.documents.filter(d=>d.name.toLowerCase().includes(search)).forEach(doc=>{ grid.innerHTML += `<div class="card p-6"><div class="flex justify-between"><div><div class="text-sm text-slate-500">${doc.type}</div><h3 class="text-xl font-bold mt-2">${doc.name}</h3><p class="text-sm text-slate-400 mt-2">${doc.fileName || ""}</p></div><button onclick="deleteDocument(${doc.id})" class="text-red-500">✕</button></div><div class="flex gap-3 mt-6"><button onclick="openDocument(${doc.id})" class="bg-slate-100 px-4 py-3 rounded-xl">Ouvrir</button><button onclick="downloadDocument(${doc.id})" class="bg-[var(--terracotta)] text-white px-4 py-3 rounded-xl">Télécharger</button></div></div>`; }); }
-function renderLogs(){ const box = document.getElementById("activityLog"); box.innerHTML = ""; state.logs.forEach(l=>{ box.innerHTML += `<div class="border rounded-2xl p-4"><div class="font-medium">${l.text}</div><div class="text-sm text-slate-500 mt-1">${l.date}</div></div>`; }); }
-function renderNotes(){ const list = document.getElementById("notesList"); list.innerHTML = ""; state.notesCollection.forEach(note=>{ list.innerHTML += `<button onclick="openNote(${note.id})" class="w-full text-left border rounded-2xl p-4 hover:bg-slate-50"><div class="font-semibold">${note.title}</div></button>`; }); if(state.activeNoteId){ const active = state.notesCollection.find(n=>n.id===state.activeNoteId); if(active){ document.getElementById("activeNoteTitle").innerText = active.title; document.getElementById("noteEditor").value = active.content; } } }
-function renderAll(){ renderDashboard(); renderBudget(); renderGuests(); renderTasks(); renderTables(); renderVendors(); renderDocuments(); renderLogs(); renderNotes(); document.getElementById("coupleName").value = state.wedding?.couple || ""; document.getElementById("weddingDate").value = state.wedding?.date || ""; document.getElementById("weddingPlace").value = state.wedding?.place || ""; document.getElementById("planner").value = state.wedding?.planner || ""; document.getElementById("themeSelect").value = state.settings.theme; document.getElementById("globalBudget").value = state.settings.budget; document.getElementById("maxGuests").value = state.settings.maxGuests; document.getElementById("currency").value = state.settings.currency; applyTheme(); renderSharedUsers(); }
-function applyTheme(){ if(state.settings.theme==="terracotta"){ document.body.classList.add("theme-terracotta"); }else{ document.body.classList.remove("theme-terracotta"); } }
+function renderBudget() {
+    const tbody = document.getElementById("budgetTable");
+    if (!tbody) return;
+    tbody.innerHTML = "";
+    state.budget.forEach(item => {
+        tbody.innerHTML += `<tr class="border-b"><td class="py-4">${item.category}</td><td>${currency(item.planned)}</td><td>${currency(item.real)}</td><td>${currency(item.deposit)}</td><td>${currency(item.real - item.deposit)}</td><td class="flex gap-2 py-3"><button onclick="deleteBudget(${item.id})" class="bg-red-100 text-red-600 px-3 py-2 rounded-xl">Supprimer</button></td></tr>`;
+    });
+}
 
-function modal(html){ document.getElementById("modalContainer").innerHTML = `<div class="fixed inset-0 bg-black/50 z-[100] flex items-center justify-center p-4"><div class="bg-white rounded-[30px] w-full max-w-xl p-8 max-h-[90vh] overflow-auto">${html}</div></div>`; }
-function closeModal(){ document.getElementById("modalContainer").innerHTML = ""; }
+function renderGuests() {
+    const tbody = document.getElementById("guestTable");
+    if (!tbody) return;
+    tbody.innerHTML = "";
+    state.guests.forEach(g => {
+        tbody.innerHTML += `<tr class="border-b"><td class="py-4">${g.last}</td><td>${g.first}</td><td>${g.rsvp}</td><td>${g.diet}</td><td>${g.plus}</td><td class="py-3"><button onclick="deleteGuest(${g.id})" class="bg-red-100 text-red-600 px-3 py-2 rounded-xl">Supprimer</button></td></tr>`;
+    });
+}
 
-function openBudgetModal(){ modal(`<h2 class="text-3xl font-bold">Ajouter budget</h2><div class="space-y-4 mt-6"><input id="bCategory" class="w-full border rounded-2xl px-4 py-3" placeholder="Catégorie"/><input id="bPlanned" type="number" class="w-full border rounded-2xl px-4 py-3" placeholder="Prévu"/><input id="bReal" type="number" class="w-full border rounded-2xl px-4 py-3" placeholder="Réel"/><input id="bDeposit" type="number" class="w-full border rounded-2xl px-4 py-3" placeholder="Acompte"/></div><div class="flex gap-3 mt-8"><button onclick="addBudget()" class="bg-[var(--terracotta)] text-white px-5 py-3 rounded-2xl">Ajouter</button><button onclick="closeModal()" class="bg-slate-200 px-5 py-3 rounded-2xl">Annuler</button></div>`); }
-function addBudget(){ state.budget.push({id:Date.now(), category:document.getElementById("bCategory").value, planned:Number(document.getElementById("bPlanned").value), real:Number(document.getElementById("bReal").value), deposit:Number(document.getElementById("bDeposit").value)}); saveState(); renderAll(); closeModal(); logAction("Nouvelle ligne budget"); }
-function deleteBudget(id){ state.budget = state.budget.filter(x=>x.id!==id); saveState(); renderAll(); }
+function renderTasks() {
+    const tbody = document.getElementById("taskTable");
+    if (!tbody) return;
+    tbody.innerHTML = "";
+    state.tasks.forEach(t => {
+        tbody.innerHTML += `<tr class="border-b"><td class="py-4">${t.date}</td><td>${t.task}</td><td>${t.owner}</td><td><span class="px-3 py-1 rounded-full ${t.status === "fait" ? "bg-emerald-100 text-emerald-700" : "bg-orange-100 text-orange-700"}">${t.status}</span></td><td class="flex gap-2 py-3"><button onclick="toggleTask(${t.id})" class="bg-slate-100 px-3 py-2 rounded-xl">Toggle</button><button onclick="deleteTask(${t.id})" class="bg-red-100 text-red-600 px-3 py-2 rounded-xl">Supprimer</button></td></tr>`;
+    });
+}
 
-function openGuestModal(){ modal(`<h2 class="text-3xl font-bold">Ajouter invité</h2><div class="space-y-4 mt-6"><input id="gLast" class="w-full border rounded-2xl px-4 py-3" placeholder="Nom"/><input id="gFirst" class="w-full border rounded-2xl px-4 py-3" placeholder="Prénom"/><select id="gRsvp" class="w-full border rounded-2xl px-4 py-3"><option>Confirmé</option><option>En attente</option><option>Refusé</option></select><input id="gDiet" class="w-full border rounded-2xl px-4 py-3" placeholder="Régime"/></div><div class="flex gap-3 mt-8"><button onclick="addGuest()" class="bg-[var(--terracotta)] text-white px-5 py-3 rounded-2xl">Ajouter</button><button onclick="closeModal()" class="bg-slate-200 px-5 py-3 rounded-2xl">Annuler</button></div>`); }
-function addGuest(){ state.guests.push({id:Date.now(), last:document.getElementById("gLast").value, first:document.getElementById("gFirst").value, rsvp:document.getElementById("gRsvp").value, diet:document.getElementById("gDiet").value, plus:0}); saveState(); renderAll(); closeModal(); logAction("Nouvel invité ajouté"); }
-function deleteGuest(id){ state.guests = state.guests.filter(x=>x.id!==id); saveState(); renderAll(); }
+function renderTables() {
+    const container = document.getElementById("tablesContainer");
+    if (!container) return;
+    container.innerHTML = "";
+    state.tables.forEach(table => {
+        const guestNames = table.guests.map(id => {
+            const g = state.guests.find(x => x.id === id);
+            return g ? g.first + " " + g.last : "";
+        });
+        container.innerHTML += `<div class="card p-6"><div class="flex justify-between items-start"><div><h3 class="text-2xl font-bold">${table.name}</h3><p class="text-slate-500 mt-1">${table.guests.length}/${table.capacity}</p></div><button onclick="deleteTable(${table.id})" class="text-red-500">✕</button></div><div class="mt-5 flex flex-wrap gap-2">${guestNames.map(n => `<span class="bg-slate-100 px-3 py-2 rounded-xl text-sm">${n}</span>`).join("")}</div><select onchange="assignGuest(${table.id},this.value)" class="mt-5 w-full border rounded-xl px-3 py-3"><option value="">Ajouter un invité</option>${state.guests.map(g => `<option value="${g.id}">${g.first} ${g.last}</option>`).join("")}</select></div>`;
+    });
+}
 
-function openTaskModal(){ modal(`<h2 class="text-3xl font-bold">Nouvelle tâche</h2><div class="space-y-4 mt-6"><input id="tDate" type="date" class="w-full border rounded-2xl px-4 py-3"/><input id="tTask" class="w-full border rounded-2xl px-4 py-3" placeholder="Tâche"/><input id="tOwner" class="w-full border rounded-2xl px-4 py-3" placeholder="Responsable"/></div><div class="flex gap-3 mt-8"><button onclick="addTask()" class="bg-[var(--terracotta)] text-white px-5 py-3 rounded-2xl">Ajouter</button><button onclick="closeModal()" class="bg-slate-200 px-5 py-3 rounded-2xl">Annuler</button></div>`); }
-function addTask(){ state.tasks.push({id:Date.now(), date:document.getElementById("tDate").value, task:document.getElementById("tTask").value, owner:document.getElementById("tOwner").value, status:"à faire"}); saveState(); renderAll(); closeModal(); logAction("Nouvelle tâche créée"); }
-function toggleTask(id){ const t = state.tasks.find(x=>x.id===id); t.status = t.status==="fait" ? "à faire" : "fait"; saveState(); renderAll(); }
-function deleteTask(id){ state.tasks = state.tasks.filter(x=>x.id!==id); saveState(); renderAll(); }
+function renderVendors() {
+    const grid = document.getElementById("vendorsGrid");
+    if (!grid) return;
+    grid.innerHTML = "";
+    state.vendors.forEach(v => {
+        grid.innerHTML += `<div class="card p-6"><div class="flex justify-between"><div><h3 class="text-2xl font-bold">${v.name}</h3><p class="text-slate-500 mt-2">${v.contact}</p></div><button onclick="deleteVendor(${v.id})" class="text-red-500">✕</button></div><div class="mt-5 space-y-3"><div class="flex justify-between"><span>Budget</span><strong>${currency(v.budget)}</strong></div><div class="flex justify-between"><span>Statut</span><span>${v.status}</span></div></div></div>`;
+    });
+}
 
-function openTableModal(){ modal(`<h2 class="text-3xl font-bold">Nouvelle table</h2><div class="space-y-4 mt-6"><input id="tableName" class="w-full border rounded-2xl px-4 py-3" placeholder="Nom"/><input id="tableCapacity" type="number" class="w-full border rounded-2xl px-4 py-3" placeholder="Capacité"/></div><div class="flex gap-3 mt-8"><button onclick="addTable()" class="bg-[var(--terracotta)] text-white px-5 py-3 rounded-2xl">Ajouter</button><button onclick="closeModal()" class="bg-slate-200 px-5 py-3 rounded-2xl">Annuler</button></div>`); }
-function addTable(){ state.tables.push({id:Date.now(), name:document.getElementById("tableName").value, capacity:Number(document.getElementById("tableCapacity").value), guests:[]}); saveState(); renderAll(); closeModal(); }
-function assignGuest(tableId,guestId){ if(!guestId) return; const table = state.tables.find(t=>t.id===tableId); if(!table.guests.includes(Number(guestId))) table.guests.push(Number(guestId)); saveState(); renderAll(); }
-function deleteTable(id){ state.tables = state.tables.filter(x=>x.id!==id); saveState(); renderAll(); }
+function renderDocuments() {
+    const grid = document.getElementById("documentsGrid");
+    if (!grid) return;
+    const searchInput = document.getElementById("docSearch");
+    const search = searchInput ? searchInput.value.toLowerCase() : "";
+    grid.innerHTML = "";
+    state.documents.filter(d => d.name.toLowerCase().includes(search)).forEach(doc => {
+        grid.innerHTML += `<div class="card p-6"><div class="flex justify-between"><div><div class="text-sm text-slate-500">${doc.type}</div><h3 class="text-xl font-bold mt-2">${doc.name}</h3><p class="text-sm text-slate-400 mt-2">${doc.fileName || ""}</p></div><button onclick="deleteDocument(${doc.id})" class="text-red-500">✕</button></div><div class="flex gap-3 mt-6"><button onclick="openDocument(${doc.id})" class="bg-slate-100 px-4 py-3 rounded-xl">Ouvrir</button><button onclick="downloadDocument(${doc.id})" class="bg-[var(--terracotta)] text-white px-4 py-3 rounded-xl">Télécharger</button></div></div>`;
+    });
+}
 
-function openVendorModal(){ modal(`<h2 class="text-3xl font-bold">Ajouter prestataire</h2><div class="space-y-4 mt-6"><input id="vName" class="w-full border rounded-2xl px-4 py-3" placeholder="Nom"/><input id="vContact" class="w-full border rounded-2xl px-4 py-3" placeholder="Contact"/><input id="vBudget" type="number" class="w-full border rounded-2xl px-4 py-3" placeholder="Budget"/><select id="vStatus" class="w-full border rounded-2xl px-4 py-3"><option>Contacté</option><option>Réservé</option></select></div><div class="flex gap-3 mt-8"><button onclick="addVendor()" class="bg-[var(--terracotta)] text-white px-5 py-3 rounded-2xl">Ajouter</button><button onclick="closeModal()" class="bg-slate-200 px-5 py-3 rounded-2xl">Annuler</button></div>`); }
-function addVendor(){ state.vendors.push({id:Date.now(), name:document.getElementById("vName").value, contact:document.getElementById("vContact").value, budget:Number(document.getElementById("vBudget").value), status:document.getElementById("vStatus").value}); saveState(); renderAll(); closeModal(); }
-function deleteVendor(id){ state.vendors = state.vendors.filter(x=>x.id!==id); saveState(); renderAll(); }
+function renderLogs() {
+    const box = document.getElementById("activityLog");
+    if (!box) return;
+    box.innerHTML = "";
+    state.logs.forEach(l => {
+        box.innerHTML += `<div class="border rounded-2xl p-4"><div class="font-medium">${l.text}</div><div class="text-sm text-slate-500 mt-1">${l.date}</div></div>`;
+    });
+}
 
-function openDocumentModal(){ modal(`<h2 class="text-3xl font-bold">Uploader document</h2><div class="space-y-4 mt-6"><input id="dName" class="w-full border rounded-2xl px-4 py-3" placeholder="Nom document"/><select id="dType" class="w-full border rounded-2xl px-4 py-3"><option>Contrat</option><option>Devis</option><option>Moodboard</option></select><input type="file" id="dFile" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png" class="w-full border rounded-2xl px-4 py-3"/></div><div class="flex gap-3 mt-8"><button onclick="addDocument()" class="bg-[var(--terracotta)] text-white px-5 py-3 rounded-2xl">Ajouter</button><button onclick="closeModal()" class="bg-slate-200 px-5 py-3 rounded-2xl">Annuler</button></div>`); }
-function addDocument(){ const fileInput = document.getElementById("dFile"); const file = fileInput.files[0]; if(!file){ alert("Veuillez sélectionner un fichier"); return; } const reader = new FileReader(); reader.onload = function(e){ state.documents.push({id:Date.now(), name:document.getElementById("dName").value, type:document.getElementById("dType").value, fileName:file.name, fileType:file.type, content:e.target.result}); saveState(); renderDocuments(); closeModal(); logAction("Document uploadé"); }; reader.readAsDataURL(file); }
-function openDocument(id){ const doc = state.documents.find(d=>d.id===id); if(!doc) return; const win = window.open(); if(doc.fileType.includes("image")){ win.document.write(`<img src="${doc.content}" style="width:100%;height:auto"/>`); }else{ win.document.write(`<iframe src="${doc.content}" width="100%" height="100%" style="position:fixed;top:0;left:0;border:none"></iframe>`); } }
-function downloadDocument(id){ const doc = state.documents.find(d=>d.id===id); const a = document.createElement("a"); a.href = doc.content; a.download = doc.fileName; a.click(); }
-function deleteDocument(id){ state.documents = state.documents.filter(x=>x.id!==id); saveState(); renderAll(); }
+function renderNotes() {
+    const list = document.getElementById("notesList");
+    if (!list) return;
+    list.innerHTML = "";
+    state.notesCollection.forEach(note => {
+        list.innerHTML += `<button onclick="openNote(${note.id})" class="w-full text-left border rounded-2xl p-4 hover:bg-slate-50"><div class="font-semibold">${note.title}</div></button>`;
+    });
+    if (state.activeNoteId) {
+        const active = state.notesCollection.find(n => n.id === state.activeNoteId);
+        if (active) {
+            const activeNoteTitleEl = document.getElementById("activeNoteTitle");
+            if (activeNoteTitleEl) activeNoteTitleEl.innerText = active.title;
+            
+            const noteEditorEl = document.getElementById("noteEditor");
+            if (noteEditorEl) noteEditorEl.value = active.content;
+        }
+    }
+}
 
-function openNewNoteModal(){ modal(`<h2 class="text-3xl font-bold">Nouvelle note</h2><div class="space-y-4 mt-6"><input id="newNoteTitle" class="w-full border rounded-2xl px-4 py-3" placeholder="Titre"/></div><div class="flex gap-3 mt-8"><button onclick="createNote()" class="bg-[var(--terracotta)] text-white px-5 py-3 rounded-2xl">Créer</button><button onclick="closeModal()" class="bg-slate-200 px-5 py-3 rounded-2xl">Annuler</button></div>`); }
-function createNote(){ const note = {id:Date.now(), title:document.getElementById("newNoteTitle").value, content:""}; state.notesCollection.push(note); state.activeNoteId = note.id; saveState(); renderNotes(); closeModal(); logAction("Nouvelle note créée"); }
-function openNote(id){ state.activeNoteId = id; saveState(); renderNotes(); }
-function deleteCurrentNote(){ if(!state.activeNoteId) return; state.notesCollection = state.notesCollection.filter(n=>n.id!==state.activeNoteId); state.activeNoteId = null; saveState(); renderNotes(); }
+function applyTheme() {
+    if (state.settings.theme === "terracotta") {
+        document.body.classList.add("theme-terracotta");
+    } else {
+        document.body.classList.remove("theme-terracotta");
+    }
+}
 
-document.addEventListener("input", function(e){ if(e.target.id==="noteEditor"){ const active = state.notesCollection.find(n=>n.id===state.activeNoteId); if(active){ active.content = e.target.value; saveState(); } } });
-function saveWeddingInfo(){ state.wedding = {couple:document.getElementById("coupleName").value, date:document.getElementById("weddingDate").value, place:document.getElementById("weddingPlace").value, planner:document.getElementById("planner").value}; saveState(); logAction("Informations mariage sauvegardées"); alert("Informations sauvegardées"); }
-function saveSettings(){ state.settings.theme = document.getElementById("themeSelect").value; state.settings.budget = Number(document.getElementById("globalBudget").value); state.settings.maxGuests = Number(document.getElementById("maxGuests").value); state.settings.currency = document.getElementById("currency").value; saveState(); applyTheme(); renderAll(); logAction("Paramètres mis à jour"); alert("Paramètres sauvegardés"); }
+function modal(html) {
+    const modalContainer = document.getElementById("modalContainer");
+    if (modalContainer) {
+        modalContainer.innerHTML = `<div class="fixed inset-0 bg-black/50 z-[100] flex items-center justify-center p-4"><div class="bg-white rounded-[30px] w-full max-w-xl p-8 max-h-[90vh] overflow-auto">${html}</div></div>`;
+    }
+}
 
-document.getElementById("csvFile").addEventListener("change",function(e){ const file = e.target.files[0]; if(!file) return; Papa.parse(file,{header:true, complete:function(results){ results.data.forEach(row=>{ if(row.nom){ state.guests.push({id:Date.now()+Math.random(), last:row.nom || "", first:row.prenom || "", rsvp:row.rsvp || "En attente", diet:row.regime || "Standard", plus:Number(row.plus || 0)}); } }); saveState(); renderAll(); alert("CSV importé"); }}); });
+function closeModal() {
+    const modalContainer = document.getElementById("modalContainer");
+    if (modalContainer) modalContainer.innerHTML = "";
+}
 
-function exportBudgetCSV(){ const ws = XLSX.utils.json_to_sheet(state.budget); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Budget"); XLSX.writeFile(wb, "budget_pristivia.xlsx"); }
-function exportGuestsCSV(){ const ws = XLSX.utils.json_to_sheet(state.guests); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Guests"); XLSX.writeFile(wb, "guests_pristivia.xlsx"); }
-function exportTasksExcel(){ const ws = XLSX.utils.json_to_sheet(state.tasks); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Tasks"); XLSX.writeFile(wb, "tasks_pristivia.xlsx"); }
-function exportDocumentsZip(){ const ws = XLSX.utils.json_to_sheet(state.documents.map(d=>({Nom:d.name, Type:d.type, Fichier:d.fileName}))); const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, ws, "Documents"); XLSX.writeFile(wb, "documents_pristivia.xlsx"); }
-function exportTablesPDF(){ const { jsPDF } = window.jspdf; const doc = new jsPDF(); doc.setFontSize(20); doc.text("Plan de table - Pristivia", 20, 20); let y = 40; state.tables.forEach(t=>{ doc.setFontSize(14); doc.text(`${t.name} (${t.guests.length}/${t.capacity})`, 20, y); y += 10; t.guests.forEach(gid=>{ const g = state.guests.find(x=>x.id===gid); if(g){ doc.text(`- ${g.first} ${g.last}`, 30, y); y += 8; } }); y += 10; }); doc.save("plan_de_table.pdf"); }
+// ============ MODALS ET CRUD ============
+
+function openBudgetModal() {
+    modal(`<h2 class="text-3xl font-bold">Ajouter budget</h2><div class="space-y-4 mt-6"><input id="bCategory" class="w-full border rounded-2xl px-4 py-3" placeholder="Catégorie"/><input id="bPlanned" type="number" class="w-full border rounded-2xl px-4 py-3" placeholder="Prévu"/><input id="bReal" type="number" class="w-full border rounded-2xl px-4 py-3" placeholder="Réel"/><input id="bDeposit" type="number" class="w-full border rounded-2xl px-4 py-3" placeholder="Acompte"/></div><div class="flex gap-3 mt-8"><button onclick="addBudget()" class="bg-[var(--terracotta)] text-white px-5 py-3 rounded-2xl">Ajouter</button><button onclick="closeModal()" class="bg-slate-200 px-5 py-3 rounded-2xl">Annuler</button></div>`);
+}
+
+function addBudget() {
+    state.budget.push({
+        id: Date.now(),
+        category: document.getElementById("bCategory").value,
+        planned: Number(document.getElementById("bPlanned").value),
+        real: Number(document.getElementById("bReal").value),
+        deposit: Number(document.getElementById("bDeposit").value)
+    });
+    saveState();
+    renderAll();
+    closeModal();
+    logAction("Nouvelle ligne budget");
+}
+
+function deleteBudget(id) {
+    state.budget = state.budget.filter(x => x.id !== id);
+    saveState();
+    renderAll();
+}
+
+function openGuestModal() {
+    modal(`<h2 class="text-3xl font-bold">Ajouter invité</h2><div class="space-y-4 mt-6"><input id="gLast" class="w-full border rounded-2xl px-4 py-3" placeholder="Nom"/><input id="gFirst" class="w-full border rounded-2xl px-4 py-3" placeholder="Prénom"/><select id="gRsvp" class="w-full border rounded-2xl px-4 py-3"><option>Confirmé</option><option>En attente</option><option>Refusé</option></select><input id="gDiet" class="w-full border rounded-2xl px-4 py-3" placeholder="Régime"/></div><div class="flex gap-3 mt-8"><button onclick="addGuest()" class="bg-[var(--terracotta)] text-white px-5 py-3 rounded-2xl">Ajouter</button><button onclick="closeModal()" class="bg-slate-200 px-5 py-3 rounded-2xl">Annuler</button></div>`);
+}
+
+function addGuest() {
+    state.guests.push({
+        id: Date.now(),
+        last: document.getElementById("gLast").value,
+        first: document.getElementById("gFirst").value,
+        rsvp: document.getElementById("gRsvp").value,
+        diet: document.getElementById("gDiet").value,
+        plus: 0
+    });
+    saveState();
+    renderAll();
+    closeModal();
+    logAction("Nouvel invité ajouté");
+}
+
+function deleteGuest(id) {
+    state.guests = state.guests.filter(x => x.id !== id);
+    saveState();
+    renderAll();
+}
+
+function openTaskModal() {
+    modal(`<h2 class="text-3xl font-bold">Nouvelle tâche</h2><div class="space-y-4 mt-6"><input id="tDate" type="date" class="w-full border rounded-2xl px-4 py-3"/><input id="tTask" class="w-full border rounded-2xl px-4 py-3" placeholder="Tâche"/><input id="tOwner" class="w-full border rounded-2xl px-4 py-3" placeholder="Responsable"/></div><div class="flex gap-3 mt-8"><button onclick="addTask()" class="bg-[var(--terracotta)] text-white px-5 py-3 rounded-2xl">Ajouter</button><button onclick="closeModal()" class="bg-slate-200 px-5 py-3 rounded-2xl">Annuler</button></div>`);
+}
+
+function addTask() {
+    state.tasks.push({
+        id: Date.now(),
+        date: document.getElementById("tDate").value,
+        task: document.getElementById("tTask").value,
+        owner: document.getElementById("tOwner").value,
+        status: "à faire"
+    });
+    saveState();
+    renderAll();
+    closeModal();
+    logAction("Nouvelle tâche créée");
+}
+
+function toggleTask(id) {
+    const t = state.tasks.find(x => x.id === id);
+    if (t) t.status = t.status === "fait" ? "à faire" : "fait";
+    saveState();
+    renderAll();
+}
+
+function deleteTask(id) {
+    state.tasks = state.tasks.filter(x => x.id !== id);
+    saveState();
+    renderAll();
+}
+
+function openTableModal() {
+    modal(`<h2 class="text-3xl font-bold">Nouvelle table</h2><div class="space-y-4 mt-6"><input id="tableName" class="w-full border rounded-2xl px-4 py-3" placeholder="Nom"/><input id="tableCapacity" type="number" class="w-full border rounded-2xl px-4 py-3" placeholder="Capacité"/></div><div class="flex gap-3 mt-8"><button onclick="addTable()" class="bg-[var(--terracotta)] text-white px-5 py-3 rounded-2xl">Ajouter</button><button onclick="closeModal()" class="bg-slate-200 px-5 py-3 rounded-2xl">Annuler</button></div>`);
+}
+
+function addTable() {
+    state.tables.push({
+        id: Date.now(),
+        name: document.getElementById("tableName").value,
+        capacity: Number(document.getElementById("tableCapacity").value),
+        guests: []
+    });
+    saveState();
+    renderAll();
+    closeModal();
+}
+
+function assignGuest(tableId, guestId) {
+    if (!guestId) return;
+    const table = state.tables.find(t => t.id === tableId);
+    if (table && !table.guests.includes(Number(guestId))) {
+        table.guests.push(Number(guestId));
+    }
+    saveState();
+    renderAll();
+}
+
+function deleteTable(id) {
+    state.tables = state.tables.filter(x => x.id !== id);
+    saveState();
+    renderAll();
+}
+
+function openVendorModal() {
+    modal(`<h2 class="text-3xl font-bold">Ajouter prestataire</h2><div class="space-y-4 mt-6"><input id="vName" class="w-full border rounded-2xl px-4 py-3" placeholder="Nom"/><input id="vContact" class="w-full border rounded-2xl px-4 py-3" placeholder="Contact"/><input id="vBudget" type="number" class="w-full border rounded-2xl px-4 py-3" placeholder="Budget"/><select id="vStatus" class="w-full border rounded-2xl px-4 py-3"><option>Contacté</option><option>Réservé</option></select></div><div class="flex gap-3 mt-8"><button onclick="addVendor()" class="bg-[var(--terracotta)] text-white px-5 py-3 rounded-2xl">Ajouter</button><button onclick="closeModal()" class="bg-slate-200 px-5 py-3 rounded-2xl">Annuler</button></div>`);
+}
+
+function addVendor() {
+    state.vendors.push({
+        id: Date.now(),
+        name: document.getElementById("vName").value,
+        contact: document.getElementById("vContact").value,
+        budget: Number(document.getElementById("vBudget").value),
+        status: document.getElementById("vStatus").value
+    });
+    saveState();
+    renderAll();
+    closeModal();
+}
+
+function deleteVendor(id) {
+    state.vendors = state.vendors.filter(x => x.id !== id);
+    saveState();
+    renderAll();
+}
+
+function openDocumentModal() {
+    modal(`<h2 class="text-3xl font-bold">Uploader document</h2><div class="space-y-4 mt-6"><input id="dName" class="w-full border rounded-2xl px-4 py-3" placeholder="Nom document"/><select id="dType" class="w-full border rounded-2xl px-4 py-3"><option>Contrat</option><option>Devis</option><option>Moodboard</option></select><input type="file" id="dFile" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png" class="w-full border rounded-2xl px-4 py-3"/></div><div class="flex gap-3 mt-8"><button onclick="addDocument()" class="bg-[var(--terracotta)] text-white px-5 py-3 rounded-2xl">Ajouter</button><button onclick="closeModal()" class="bg-slate-200 px-5 py-3 rounded-2xl">Annuler</button></div>`);
+}
+
+function addDocument() {
+    const fileInput = document.getElementById("dFile");
+    const file = fileInput ? fileInput.files[0] : null;
+    if (!file) {
+        alert("Veuillez sélectionner un fichier");
+        return;
+    }
+    const reader = new FileReader();
+    reader.onload = function(e) {
+        state.documents.push({
+            id: Date.now(),
+            name: document.getElementById("dName").value,
+            type: document.getElementById("dType").value,
+            fileName: file.name,
+            fileType: file.type,
+            content: e.target.result
+        });
+        saveState();
+        renderDocuments();
+        closeModal();
+        logAction("Document uploadé");
+    };
+    reader.readAsDataURL(file);
+}
+
+function openDocument(id) {
+    const doc = state.documents.find(d => d.id === id);
+    if (!doc) return;
+    const win = window.open();
+    if (doc.fileType.includes("image")) {
+        win.document.write(`<img src="${doc.content}" style="width:100%;height:auto"/>`);
+    } else {
+        win.document.write(`<iframe src="${doc.content}" width="100%" height="100%" style="position:fixed;top:0;left:0;border:none"></iframe>`);
+    }
+}
+
+function downloadDocument(id) {
+    const doc = state.documents.find(d => d.id === id);
+    const a = document.createElement("a");
+    a.href = doc.content;
+    a.download = doc.fileName;
+    a.click();
+}
+
+function deleteDocument(id) {
+    state.documents = state.documents.filter(x => x.id !== id);
+    saveState();
+    renderAll();
+}
+
+function openNewNoteModal() {
+    modal(`<h2 class="text-3xl font-bold">Nouvelle note</h2><div class="space-y-4 mt-6"><input id="newNoteTitle" class="w-full border rounded-2xl px-4 py-3" placeholder="Titre"/></div><div class="flex gap-3 mt-8"><button onclick="createNote()" class="bg-[var(--terracotta)] text-white px-5 py-3 rounded-2xl">Créer</button><button onclick="closeModal()" class="bg-slate-200 px-5 py-3 rounded-2xl">Annuler</button></div>`);
+}
+
+function createNote() {
+    const note = {
+        id: Date.now(),
+        title: document.getElementById("newNoteTitle").value,
+        content: ""
+    };
+    state.notesCollection.push(note);
+    state.activeNoteId = note.id;
+    saveState();
+    renderNotes();
+    closeModal();
+    logAction("Nouvelle note créée");
+}
+
+function openNote(id) {
+    state.activeNoteId = id;
+    saveState();
+    renderNotes();
+}
+
+function deleteCurrentNote() {
+    if (!state.activeNoteId) return;
+    state.notesCollection = state.notesCollection.filter(n => n.id !== state.activeNoteId);
+    state.activeNoteId = null;
+    saveState();
+    renderNotes();
+}
+
+document.addEventListener("input", function(e) {
+    if (e.target.id === "noteEditor") {
+        const active = state.notesCollection.find(n => n.id === state.activeNoteId);
+        if (active) {
+            active.content = e.target.value;
+            saveState();
+        }
+    }
+});
+
+function saveWeddingInfo() {
+    state.wedding = {
+        couple: document.getElementById("coupleName").value,
+        date: document.getElementById("weddingDate").value,
+        place: document.getElementById("weddingPlace").value,
+        planner: document.getElementById("planner").value
+    };
+    saveState();
+    logAction("Informations mariage sauvegardées");
+    alert("Informations sauvegardées");
+}
+
+function saveSettings() {
+    state.settings.theme = document.getElementById("themeSelect").value;
+    state.settings.budget = Number(document.getElementById("globalBudget").value);
+    state.settings.maxGuests = Number(document.getElementById("maxGuests").value);
+    state.settings.currency = document.getElementById("currency").value;
+    saveState();
+    applyTheme();
+    renderAll();
+    logAction("Paramètres mis à jour");
+    alert("Paramètres sauvegardés");
+}
+
+// CSV Import
+document.getElementById("csvFile")?.addEventListener("change", function(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    Papa.parse(file, {
+        header: true,
+        complete: function(results) {
+            results.data.forEach(row => {
+                if (row.nom) {
+                    state.guests.push({
+                        id: Date.now() + Math.random(),
+                        last: row.nom || "",
+                        first: row.prenom || "",
+                        rsvp: row.rsvp || "En attente",
+                        diet: row.regime || "Standard",
+                        plus: Number(row.plus || 0)
+                    });
+                }
+            });
+            saveState();
+            renderAll();
+            alert("CSV importé");
+        }
+    });
+});
+
+// Exports
+function exportBudgetCSV() {
+    const ws = XLSX.utils.json_to_sheet(state.budget);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Budget");
+    XLSX.writeFile(wb, "budget_pristivia.xlsx");
+}
+
+function exportGuestsCSV() {
+    const ws = XLSX.utils.json_to_sheet(state.guests);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Guests");
+    XLSX.writeFile(wb, "guests_pristivia.xlsx");
+}
+
+function exportTasksExcel() {
+    const ws = XLSX.utils.json_to_sheet(state.tasks);
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Tasks");
+    XLSX.writeFile(wb, "tasks_pristivia.xlsx");
+}
+
+function exportDocumentsZip() {
+    const ws = XLSX.utils.json_to_sheet(state.documents.map(d => ({
+        Nom: d.name,
+        Type: d.type,
+        Fichier: d.fileName
+    })));
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, "Documents");
+    XLSX.writeFile(wb, "documents_pristivia.xlsx");
+}
+
+function exportTablesPDF() {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF();
+    doc.setFontSize(20);
+    doc.text("Plan de table - Pristivia", 20, 20);
+    let y = 40;
+    state.tables.forEach(t => {
+        doc.setFontSize(14);
+        doc.text(`${t.name} (${t.guests.length}/${t.capacity})`, 20, y);
+        y += 10;
+        t.guests.forEach(gid => {
+            const g = state.guests.find(x => x.id === gid);
+            if (g) {
+                doc.text(`- ${g.first} ${g.last}`, 30, y);
+                y += 8;
+            }
+        });
+        y += 10;
+    });
+    doc.save("plan_de_table.pdf");
+}
 
 // ============ INITIALISATION ============
 auth.onAuthStateChanged(async (user) => {
+    console.log("🔐 Auth state changed:", user ? `Connecté: ${user.email}` : "Déconnecté");
+    
     if (user) {
         currentUser = user;
         updateUserUI(currentUser);
@@ -1059,8 +1615,13 @@ auth.onAuthStateChanged(async (user) => {
     }
 });
 
-setInterval(() => { if (document.getElementById("appContent").style.display !== "none") { lucide.createIcons(); } }, 1000);
-
+// Rafraîchir les icônes périodiquement
+setInterval(() => {
+    const appContent = document.getElementById("appContent");
+    if (appContent && appContent.style.display !== "none" && typeof lucide !== 'undefined' && lucide.createIcons) {
+        lucide.createIcons();
+    }
+}, 2000);
 </script>
 
 </body>
