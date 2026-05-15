@@ -27,9 +27,10 @@
 <!-- jsPDF -->
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 
-<!-- Firebase SDKs (version compat pour plus de simplicité) -->
+<!-- Firebase SDKs -->
 <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
 
 <style>
 :root{
@@ -80,11 +81,103 @@ h1,h2,h3,h4{
 input,select,textarea{
     outline:none;
 }
+
+/* Styles pour l'écran de connexion */
+.login-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0,0,0,0.8);
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.login-card {
+    background: white;
+    border-radius: 32px;
+    padding: 48px;
+    max-width: 450px;
+    width: 90%;
+    text-align: center;
+}
+
+.google-btn {
+    background: white;
+    border: 1px solid #e0e0e0;
+    border-radius: 50px;
+    padding: 12px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    cursor: pointer;
+    transition: all 0.3s;
+    width: 100%;
+    font-weight: 500;
+}
+
+.google-btn:hover {
+    background: #f5f5f5;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+}
+
+.user-avatar {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    object-fit: cover;
+}
+
+.logout-btn {
+    cursor: pointer;
+    transition: opacity 0.2s;
+}
+
+.logout-btn:hover {
+    opacity: 0.8;
+}
 </style>
 </head>
 
 <body class="min-h-screen">
 
+<!-- Écran de connexion (caché par défaut) -->
+<div id="loginScreen" class="login-overlay" style="display: none;">
+    <div class="login-card">
+        <div class="mb-6">
+            <h1 class="text-4xl font-bold text-[var(--navy)]">Pristivia</h1>
+            <p class="text-gray-500 mt-2">Wedding planning collaboratif</p>
+        </div>
+        
+        <div class="mb-8">
+            <div class="w-24 h-24 bg-[var(--terracotta)] rounded-full flex items-center justify-center mx-auto mb-4">
+                <i data-lucide="heart" class="text-white" style="width: 48px; height: 48px;"></i>
+            </div>
+            <p class="text-gray-600">Connectez-vous pour accéder à votre espace mariage</p>
+        </div>
+        
+        <button onclick="signInWithGoogle()" class="google-btn">
+            <svg width="24" height="24" viewBox="0 0 24 24">
+                <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
+                <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
+                <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
+                <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
+            </svg>
+            Se connecter avec Google
+        </button>
+        
+        <p class="text-xs text-gray-400 mt-6">
+            En vous connectant, vous acceptez de partager votre email avec l'application
+        </p>
+    </div>
+</div>
+
+<div id="appContent" style="display: none;">
 <div class="flex min-h-screen">
 
 <!-- SIDEBAR -->
@@ -108,13 +201,20 @@ class="fixed lg:sticky top-0 z-50 w-72 bg-[var(--navy)] text-white min-h-screen 
 
     <div class="p-6 border-b border-white/10">
         <div class="bg-white/10 rounded-2xl p-4">
-            <div class="text-xs uppercase tracking-wide text-white/60">
-                Rôle actuel
+            <div class="flex items-center gap-3">
+                <img id="userAvatar" class="user-avatar" src="" alt="Avatar">
+                <div>
+                    <div class="text-xs uppercase tracking-wide text-white/60">
+                        Connecté en tant que
+                    </div>
+                    <div id="userName" class="font-semibold mt-1 text-sm">
+                        Chargement...
+                    </div>
+                </div>
             </div>
-
-            <div class="font-semibold mt-2">
-                Admin principal / Marié
-            </div>
+            <button onclick="signOut()" class="logout-btn mt-3 text-xs text-white/70 hover:text-white w-full text-left">
+                🚪 Se déconnecter
+            </button>
         </div>
     </div>
 
@@ -213,8 +313,12 @@ class="fixed lg:sticky top-0 z-50 w-72 bg-[var(--navy)] text-white min-h-screen 
 
         </div>
 
-        <div class="w-11 h-11 rounded-full bg-[var(--terracotta)] text-white flex items-center justify-center font-bold">
-            P
+        <div class="flex items-center gap-3">
+            <div class="text-right hidden sm:block">
+                <div id="headerUserName" class="text-sm font-medium text-slate-700"></div>
+                <div id="headerUserEmail" class="text-xs text-slate-500"></div>
+            </div>
+            <img id="headerAvatar" class="w-11 h-11 rounded-full object-cover border-2 border-[var(--terracotta)]">
         </div>
 
     </div>
@@ -767,6 +871,7 @@ class="fixed lg:sticky top-0 z-50 w-72 bg-[var(--navy)] text-white min-h-screen 
 
 </main>
 </div>
+</div>
 
 <!-- MODAL -->
 <div id="modalContainer"></div>
@@ -786,10 +891,10 @@ const firebaseConfig = {
 // Initialiser Firebase
 firebase.initializeApp(firebaseConfig);
 const db = firebase.firestore();
+const auth = firebase.auth();
 
 // ============ VARIABLES GLOBALES ============
-lucide.createIcons();
-
+let currentUser = null;
 let state = {
     budget: [],
     guests: [],
@@ -815,15 +920,100 @@ let state = {
     isSyncing: false
 };
 
-// ============ FONCTIONS DE SYNCHRONISATION FIREBASE ============
+// ============ AUTHENTIFICATION ============
 
-// Sauvegarder TOUT l'état dans Firebase
+// Afficher/masquer l'écran de connexion
+function showLoginScreen(show) {
+    const loginScreen = document.getElementById("loginScreen");
+    const appContent = document.getElementById("appContent");
+    
+    if (show) {
+        loginScreen.style.display = "flex";
+        appContent.style.display = "none";
+    } else {
+        loginScreen.style.display = "none";
+        appContent.style.display = "block";
+    }
+}
+
+// Mettre à jour l'interface utilisateur avec les infos de l'utilisateur
+function updateUserUI(user) {
+    if (!user) return;
+    
+    const userName = user.displayName || user.email;
+    const userEmail = user.email;
+    const userAvatar = user.photoURL || `https://ui-avatars.com/api/?name=${encodeURIComponent(userName)}&background=E2725B&color=fff`;
+    
+    document.getElementById("userName").innerText = userName;
+    document.getElementById("userAvatar").src = userAvatar;
+    document.getElementById("headerUserName").innerText = userName;
+    document.getElementById("headerUserEmail").innerText = userEmail;
+    document.getElementById("headerAvatar").src = userAvatar;
+}
+
+// Connexion avec Google
+async function signInWithGoogle() {
+    const provider = new firebase.auth.GoogleAuthProvider();
+    provider.setCustomParameters({ prompt: 'select_account' });
+    
+    try {
+        const result = await auth.signInWithPopup(provider);
+        currentUser = result.user;
+        updateUserUI(currentUser);
+        showLoginScreen(false);
+        
+        // Charger les données de l'utilisateur
+        await loadUserData();
+        
+        logAction(`${currentUser.displayName || currentUser.email} s'est connecté(e)`);
+        
+        // Démarrer l'écoute en temps réel
+        listenToFirebase();
+        renderAll();
+        
+    } catch (error) {
+        console.error("Erreur de connexion:", error);
+        alert("Erreur de connexion: " + error.message);
+    }
+}
+
+// Déconnexion
+async function signOut() {
+    try {
+        await auth.signOut();
+        currentUser = null;
+        showLoginScreen(true);
+        
+        // Nettoyer l'état
+        state = {
+            budget: [], guests: [], tasks: [], tables: [], vendors: [], 
+            documents: [], logs: [], notesCollection: [], activeNoteId: null,
+            settings: { theme: "navy", budget: 10000000, maxGuests: 300, currency: "FCFA" },
+            wedding: { couple: "", date: "", place: "", planner: "" },
+            isSyncing: false
+        };
+        
+    } catch (error) {
+        console.error("Erreur de déconnexion:", error);
+    }
+}
+
+// ============ GESTION DES DONNÉES PAR UTILISATEUR ============
+
+// Obtenir le chemin de document unique pour l'utilisateur
+function getUserDocPath() {
+    if (!currentUser) return null;
+    return `users/${currentUser.uid}/weddingData/mainState`;
+}
+
+// Sauvegarder les données dans Firebase (propre à l'utilisateur)
 async function syncToFirebase() {
-    if (state.isSyncing) return;
+    if (!currentUser || state.isSyncing) return;
     state.isSyncing = true;
     
     try {
-        await db.collection("weddingData").doc("mainState").set({
+        const docPath = getUserDocPath();
+        await db.doc(docPath).set({
             budget: state.budget,
             guests: state.guests,
             tasks: state.tasks,
@@ -837,55 +1027,80 @@ async function syncToFirebase() {
             wedding: state.wedding,
             lastUpdated: firebase.firestore.FieldValue.serverTimestamp()
         });
-        console.log("✅ Synchronisé avec Firebase");
+        console.log("✅ Données sauvegardées pour", currentUser.email);
     } catch (error) {
-        console.error("❌ Erreur de sync:", error);
+        console.error("❌ Erreur de sauvegarde:", error);
     } finally {
         state.isSyncing = false;
     }
 }
 
-// Écouter les changements en temps réel depuis Firebase
-function listenToFirebase() {
-    db.collection("weddingData").doc("mainState")
-        .onSnapshot((doc) => {
-            if (doc.exists && !state.isSyncing) {
-                const data = doc.data();
-                state.isSyncing = true;
-                
-                state.budget = data.budget || [];
-                state.guests = data.guests || [];
-                state.tasks = data.tasks || [];
-                state.tables = data.tables || [];
-                state.vendors = data.vendors || [];
-                state.documents = data.documents || [];
-                state.logs = data.logs || [];
-                state.notesCollection = data.notesCollection || [];
-                state.activeNoteId = data.activeNoteId || null;
-                state.settings = data.settings || state.settings;
-                state.wedding = data.wedding || state.wedding;
-                
-                renderAll();
-                state.isSyncing = false;
-                console.log("📡 Données synchronisées depuis le cloud");
-            }
-        }, (error) => {
-            console.error("Erreur d'écoute Firebase:", error);
-            state.isSyncing = false;
-        });
+// Charger les données depuis Firebase
+async function loadUserData() {
+    if (!currentUser) return;
+    
+    try {
+        const docPath = getUserDocPath();
+        const docRef = await db.doc(docPath).get();
+        
+        if (docRef.exists) {
+            const data = docRef.data();
+            state.budget = data.budget || [];
+            state.guests = data.guests || [];
+            state.tasks = data.tasks || [];
+            state.tables = data.tables || [];
+            state.vendors = data.vendors || [];
+            state.documents = data.documents || [];
+            state.logs = data.logs || [];
+            state.notesCollection = data.notesCollection || [];
+            state.activeNoteId = data.activeNoteId || null;
+            state.settings = data.settings || state.settings;
+            state.wedding = data.wedding || state.wedding;
+            console.log("📀 Données chargées pour", currentUser.email);
+        } else {
+            // Premier utilisateur - données par défaut
+            seedDefaultData();
+            await syncToFirebase();
+        }
+    } catch (error) {
+        console.error("Erreur de chargement:", error);
+        seedDefaultData();
+    }
 }
 
-// ============ DONNÉES PAR DÉFAUT (PREMIÈRE INSTALLATION) ============
-async function seedData() {
-    const docRef = await db.collection("weddingData").doc("mainState").get();
+// Écouter les changements en temps réel
+function listenToFirebase() {
+    if (!currentUser) return;
     
-    if (docRef.exists) {
-        console.log("📀 Données existantes sur Firebase - chargement en cours");
-        return;
-    }
-    
-    console.log("🌱 Initialisation des données par défaut...");
-    
+    const docPath = getUserDocPath();
+    db.doc(docPath).onSnapshot((doc) => {
+        if (doc.exists && !state.isSyncing) {
+            const data = doc.data();
+            state.isSyncing = true;
+            
+            state.budget = data.budget || [];
+            state.guests = data.guests || [];
+            state.tasks = data.tasks || [];
+            state.tables = data.tables || [];
+            state.vendors = data.vendors || [];
+            state.documents = data.documents || [];
+            state.logs = data.logs || [];
+            state.notesCollection = data.notesCollection || [];
+            state.activeNoteId = data.activeNoteId || null;
+            state.settings = data.settings || state.settings;
+            state.wedding = data.wedding || state.wedding;
+            
+            renderAll();
+            state.isSyncing = false;
+            console.log("📡 Synchronisation temps réel");
+        }
+    }, (error) => {
+        console.error("Erreur d'écoute:", error);
+    });
+}
+
+// Données par défaut
+function seedDefaultData() {
     state.budget = [
         {id:1,category:"Salle",planned:2500000,real:2000000,deposit:1000000},
         {id:2,category:"Traiteur",planned:1800000,real:1500000,deposit:500000},
@@ -931,14 +1146,14 @@ async function seedData() {
         {id:1,title:"Checklist mariage",content:"Finaliser le traiteur et les invitations."}
     ];
     state.activeNoteId = 1;
-    
-    await syncToFirebase();
 }
 
 // ============ FONCTIONS UTILITAIRES ============
 function toggleSidebar(){
     document.getElementById("sidebar").classList.toggle("-translate-x-full");
 }
+
+lucide.createIcons();
 
 document.querySelectorAll(".nav-link").forEach(btn=>{
     btn.addEventListener("click",()=>{
@@ -955,7 +1170,7 @@ function currency(n){
 }
 
 function saveState() {
-    syncToFirebase(); // Plus de localStorage, synchro cloud directe
+    syncToFirebase();
 }
 
 function logAction(action){
@@ -1334,14 +1549,28 @@ function exportTablesPDF(){
     doc.save("plan_de_table.pdf");
 }
 
-// ============ INITIALISATION DE L'APPLICATION ============
-async function init() {
-    await seedData();      // Initialise les données si le cloud est vide
-    listenToFirebase();    // Écoute les changements en temps réel
-    renderAll();           // Affiche l'interface
-}
+// ============ INITIALISATION ============
+auth.onAuthStateChanged(async (user) => {
+    if (user) {
+        currentUser = user;
+        updateUserUI(currentUser);
+        showLoginScreen(false);
+        await loadUserData();
+        listenToFirebase();
+        renderAll();
+        logAction(`${currentUser.displayName || currentUser.email} a ouvert l'application`);
+    } else {
+        currentUser = null;
+        showLoginScreen(true);
+    }
+});
 
-init();
+// Rafraîchir les icônes Lucide après chaque rendu
+setInterval(() => {
+    if (document.getElementById("appContent").style.display !== "none") {
+        lucide.createIcons();
+    }
+}, 1000);
 
 </script>
 
