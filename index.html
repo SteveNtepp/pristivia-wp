@@ -148,6 +148,18 @@ input,select,textarea{
     font-size: 11px;
     font-weight: 500;
 }
+
+.code-display {
+    background: #f0f0f0;
+    border-radius: 16px;
+    padding: 20px;
+    text-align: center;
+    font-family: monospace;
+    font-size: 32px;
+    font-weight: bold;
+    letter-spacing: 4px;
+    color: var(--navy);
+}
 </style>
 </head>
 
@@ -176,6 +188,19 @@ input,select,textarea{
                 <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
             </svg>
             Se connecter avec Google
+        </button>
+        
+        <div class="mt-4 relative">
+            <div class="absolute inset-0 flex items-center">
+                <div class="w-full border-t border-gray-300"></div>
+            </div>
+            <div class="relative flex justify-center text-sm">
+                <span class="px-2 bg-white text-gray-500">ou</span>
+            </div>
+        </div>
+        
+        <button onclick="joinWeddingWithCodePrompt()" class="google-btn mt-4" style="background: var(--navy); color: white; border: none;">
+            🔗 J'ai un code d'invitation
         </button>
     </div>
 </div>
@@ -450,18 +475,243 @@ let state = {
     isSyncing: false
 };
 
-// ============ GESTION DU PARTAGE ============
+// ============ GESTION DU PARTAGE AVEC CODE ============
 
 // Générer un code d'invitation unique
 function generateInviteCode() {
     return Math.random().toString(36).substring(2, 10).toUpperCase();
 }
 
+// Copier le code d'invitation
+function copyInviteCode(code) {
+    navigator.clipboard.writeText(code);
+    alert("✅ Code copié ! Partagez-le avec votre conjoint(e)");
+}
+
+// Rejoindre un planning avec un code (appelé depuis le prompt)
+async function joinWeddingWithCodePrompt() {
+    const code = prompt("Entrez le code d'invitation partagé par votre conjoint(e) :");
+    if (!code) return;
+    await joinWeddingWithCode(code.toUpperCase());
+}
+
+// Rejoindre un planning avec un code
+async function joinWeddingWithCode(code) {
+    if (!code) return;
+    
+    try {
+        // Chercher le wedding avec ce code
+        const weddingsSnapshot = await db.collection("weddings")
+            .where("inviteCode", "==", code)
+            .limit(1)
+            .get();
+        
+        if (weddingsSnapshot.empty) {
+            alert("❌ Code invalide. Vérifiez auprès de votre conjoint(e).");
+            return false;
+        }
+        
+        const wedding = weddingsSnapshot.docs[0];
+        const weddingId = wedding.id;
+        
+        // Vérifier si déjà partagé
+        const existingShare = await db.collection("weddingShares")
+            .doc(`${weddingId}_${currentUser.uid}`)
+            .get();
+        
+        if (existingShare.exists) {
+            alert("ℹ️ Vous avez déjà accès à ce planning !");
+            currentWeddingId = weddingId;
+            await loadWeddingData();
+            await renderSharedUsers();
+            listenToWedding();
+            renderAll();
+            return true;
+        }
+        
+        // Ajouter le partage
+        await db.collection("weddingShares").doc(`${weddingId}_${currentUser.uid}`).set({
+            weddingId: weddingId,
+            sharedWithId: currentUser.uid,
+            sharedWithEmail: currentUser.email,
+            sharedWithName: currentUser.displayName,
+            role: "editor",
+            joinedAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
+        
+        currentWeddingId = weddingId;
+        await loadWeddingData();
+        await renderSharedUsers();
+        listenToWedding();
+        renderAll();
+        
+        alert("✅ Félicitations ! Vous avez rejoint le planning de mariage !");
+        return true;
+        
+    } catch (error) {
+        console.error("Erreur:", error);
+        alert("❌ Erreur lors de la jointure");
+        return false;
+    }
+}
+
+// Afficher la modale d'invitation avec code
+async function openInviteModal() {
+    const weddingRef = db.collection("weddings").doc(currentWeddingId);
+    const weddingDoc = await weddingRef.get();
+    let inviteCode = weddingDoc.data().inviteCode;
+    
+    if (!inviteCode) {
+        inviteCode = generateInviteCode();
+        await weddingRef.update({ inviteCode: inviteCode });
+    }
+    
+    modal(`
+        <h2 class="text-3xl font-bold">Partager votre planning</h2>
+        <p class="text-slate-500 mt-2">Invitez votre conjoint(e) à collaborer</p>
+        
+        <div class="mt-6 bg-slate-100 rounded-2xl p-6 text-center">
+            <div class="text-sm text-slate-500 mb-2">Code d'invitation unique</div>
+            <div class="text-4xl font-mono font-bold tracking-wider text-[var(--navy)]">${inviteCode}</div>
+            <button onclick="copyInviteCode('${inviteCode}'); closeModal();" class="mt-4 text-sm text-[var(--terracotta)] hover:underline">
+                📋 Copier le code
+            </button>
+        </div>
+        
+        <div class="mt-6 bg-blue-50 rounded-2xl p-4">
+            <div class="text-sm font-semibold text-blue-800 mb-2">📌 Instructions</div>
+            <div class="text-xs text-blue-700 space-y-1">
+                <div>1. Copiez le code ci-dessus</div>
+                <div>2. Envoyez-le à votre conjoint(e) (WhatsApp, SMS, etc.)</div>
+                <div>3. Votre conjoint(e) se connecte et clique sur "J'ai un code d'invitation"</div>
+                <div>4. Il/elle colle le code et accède automatiquement au planning</div>
+            </div>
+        </div>
+        
+        <div class="mt-6">
+            <label class="block text-sm font-medium mb-2">Ou ajouter par email (recommandé pour les invités existants)</label>
+            <input id="inviteEmail" type="email" class="w-full border rounded-2xl px-4 py-3" placeholder="Email du conjoint"/>
+            <button onclick="addUserByEmail(document.getElementById('inviteEmail').value)" class="mt-3 w-full bg-[var(--terracotta)] text-white px-5 py-3 rounded-2xl">
+                Ajouter par email
+            </button>
+        </div>
+        
+        <div class="flex gap-3 mt-8">
+            <button onclick="closeModal()" class="flex-1 bg-slate-200 px-5 py-3 rounded-2xl">Fermer</button>
+        </div>
+    `);
+}
+
+// Ajouter un utilisateur par email
+async function addUserByEmail(email) {
+    if (!email) {
+        alert("Veuillez entrer un email");
+        return;
+    }
+    
+    try {
+        await db.collection("weddingInvites").add({
+            weddingId: currentWeddingId,
+            invitedEmail: email,
+            invitedBy: currentUser.uid,
+            invitedByName: currentUser.displayName,
+            status: "pending",
+            createdAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
+        
+        alert(`✅ Invitation envoyée à ${email} !\n\nLa personne pourra se connecter avec son compte Google et accéder automatiquement au planning.`);
+        closeModal();
+    } catch (error) {
+        console.error("Erreur d'invitation:", error);
+        alert("❌ Erreur lors de l'invitation");
+    }
+}
+
+// Vérifier les invitations en attente
+async function checkPendingInvites() {
+    const invitesSnapshot = await db.collection("weddingInvites")
+        .where("invitedEmail", "==", currentUser.email)
+        .where("status", "==", "pending")
+        .get();
+    
+    for (const inviteDoc of invitesSnapshot.docs) {
+        const invite = inviteDoc.data();
+        
+        // Vérifier si déjà partagé
+        const existingShare = await db.collection("weddingShares")
+            .doc(`${invite.weddingId}_${currentUser.uid}`)
+            .get();
+        
+        if (!existingShare.exists) {
+            await db.collection("weddingShares").doc(`${invite.weddingId}_${currentUser.uid}`).set({
+                weddingId: invite.weddingId,
+                sharedWithId: currentUser.uid,
+                sharedWithEmail: currentUser.email,
+                sharedWithName: currentUser.displayName,
+                role: "editor",
+                joinedAt: firebase.firestore.FieldValue.serverTimestamp()
+            });
+        }
+        
+        await inviteDoc.ref.update({
+            status: "accepted",
+            acceptedAt: firebase.firestore.FieldValue.serverTimestamp()
+        });
+        
+        currentWeddingId = invite.weddingId;
+        
+        alert(`🎉 Vous avez été invité(e) par ${invite.invitedByName} à collaborer sur son planning de mariage !`);
+    }
+}
+
+// Afficher les utilisateurs partagés
+async function renderSharedUsers() {
+    if (!currentWeddingId) return;
+    
+    const sharesSnapshot = await db.collection("weddingShares")
+        .where("weddingId", "==", currentWeddingId)
+        .get();
+    
+    const container = document.getElementById("sharedUsersList");
+    container.innerHTML = "";
+    
+    for (const shareDoc of sharesSnapshot.docs) {
+        const share = shareDoc.data();
+        
+        // Récupérer si c'est le propriétaire
+        const weddingDoc = await db.collection("weddings").doc(currentWeddingId).get();
+        const isOwner = weddingDoc.exists && weddingDoc.data().ownerId === share.sharedWithId;
+        const isCurrentUser = share.sharedWithId === currentUser.uid;
+        
+        container.innerHTML += `
+            <div class="flex items-center justify-between py-1">
+                <div class="flex items-center gap-2">
+                    <span>${share.sharedWithName?.split(' ')[0] || share.sharedWithEmail?.split('@')[0]}</span>
+                    ${isOwner ? '<span class="invite-badge">👑 Propriétaire</span>' : ''}
+                    ${isCurrentUser ? '<span class="invite-badge">👤 Vous</span>' : ''}
+                </div>
+                ${!isOwner && !isCurrentUser ? `<button onclick="removeUser('${share.sharedWithId}')" class="text-red-300 text-xs hover:text-red-100">❌</button>` : ''}
+            </div>
+        `;
+    }
+}
+
+// Supprimer un utilisateur du partage
+async function removeUser(userId) {
+    if (confirm("Retirer cet utilisateur du planning ?")) {
+        await db.collection("weddingShares").doc(`${currentWeddingId}_${userId}`).delete();
+        await renderSharedUsers();
+        alert("✅ Utilisateur retiré");
+    }
+}
+
+// ============ GESTION DES DONNÉES ============
+
 // Créer ou récupérer un weddingId pour l'utilisateur
 async function getOrCreateWedding() {
     if (currentWeddingId) return currentWeddingId;
     
-    // Chercher si l'utilisateur a déjà un mariage
+    // Chercher si l'utilisateur est déjà dans un partage
     const sharesSnapshot = await db.collection("weddingShares")
         .where("sharedWithId", "==", currentUser.uid)
         .limit(1)
@@ -490,8 +740,7 @@ async function getOrCreateWedding() {
         ownerEmail: currentUser.email,
         ownerName: currentUser.displayName,
         createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-        inviteCode: generateInviteCode(),
-        sharedWith: []
+        inviteCode: generateInviteCode()
     });
     
     // Créer le lien propriétaire
@@ -508,112 +757,7 @@ async function getOrCreateWedding() {
     return currentWeddingId;
 }
 
-// Inviter un utilisateur par email
-async function inviteUserByEmail(email) {
-    if (!currentWeddingId) await getOrCreateWedding();
-    
-    // Vérifier si l'utilisateur existe dans Firebase Auth
-    try {
-        // Récupérer l'utilisateur par email (nécessite Functions ou admin SDK)
-        // Solution alternative : créer une invitation en attente
-        const inviteRef = db.collection("weddingInvites").doc();
-        await inviteRef.set({
-            weddingId: currentWeddingId,
-            invitedEmail: email,
-            invitedBy: currentUser.uid,
-            invitedByName: currentUser.displayName,
-            status: "pending",
-            createdAt: firebase.firestore.FieldValue.serverTimestamp()
-        });
-        
-        // Mettre à jour le code d'invitation du mariage
-        await db.collection("weddings").doc(currentWeddingId).update({
-            pendingInvites: firebase.firestore.FieldValue.arrayUnion(email)
-        });
-        
-        alert(`Invitation envoyée à ${email} !`);
-        return true;
-    } catch (error) {
-        console.error("Erreur d'invitation:", error);
-        alert("Erreur lors de l'invitation");
-        return false;
-    }
-}
-
-// Accepter une invitation (à appeler au chargement)
-async function checkPendingInvites() {
-    const invitesSnapshot = await db.collection("weddingInvites")
-        .where("invitedEmail", "==", currentUser.email)
-        .where("status", "==", "pending")
-        .get();
-    
-    for (const inviteDoc of invitesSnapshot.docs) {
-        const invite = inviteDoc.data();
-        
-        // Ajouter l'utilisateur au partage
-        await db.collection("weddingShares").doc(`${invite.weddingId}_${currentUser.uid}`).set({
-            weddingId: invite.weddingId,
-            sharedWithId: currentUser.uid,
-            sharedWithEmail: currentUser.email,
-            sharedWithName: currentUser.displayName,
-            role: "editor",
-            createdAt: firebase.firestore.FieldValue.serverTimestamp()
-        });
-        
-        // Mettre à jour l'invitation
-        await inviteDoc.ref.update({
-            status: "accepted",
-            acceptedAt: firebase.firestore.FieldValue.serverTimestamp()
-        });
-        
-        // Mettre à jour le weddingId courant
-        currentWeddingId = invite.weddingId;
-        
-        alert(`Vous avez été ajouté au planning de mariage !`);
-    }
-}
-
-// Afficher les utilisateurs partagés
-async function renderSharedUsers() {
-    if (!currentWeddingId) return;
-    
-    const sharesSnapshot = await db.collection("weddingShares")
-        .where("weddingId", "==", currentWeddingId)
-        .get();
-    
-    const container = document.getElementById("sharedUsersList");
-    container.innerHTML = "";
-    
-    for (const shareDoc of sharesSnapshot.docs) {
-        const share = shareDoc.data();
-        const isOwner = share.role === "owner";
-        const isCurrentUser = share.sharedWithId === currentUser.uid;
-        
-        container.innerHTML += `
-            <div class="flex items-center justify-between py-1">
-                <div class="flex items-center gap-2">
-                    <span>${share.sharedWithName?.split(' ')[0] || share.sharedWithEmail?.split('@')[0]}</span>
-                    ${isOwner ? '<span class="invite-badge">👑 Propriétaire</span>' : ''}
-                    ${isCurrentUser ? '<span class="invite-badge">👤 Vous</span>' : ''}
-                </div>
-                ${!isOwner && !isCurrentUser ? `<button onclick="removeUser('${share.sharedWithId}')" class="text-red-300 text-xs hover:text-red-100">❌</button>` : ''}
-            </div>
-        `;
-    }
-}
-
-// Supprimer un utilisateur du partage
-async function removeUser(userId) {
-    if (confirm("Retirer cet utilisateur du planning ?")) {
-        await db.collection("weddingShares").doc(`${currentWeddingId}_${userId}`).delete();
-        await renderSharedUsers();
-        alert("Utilisateur retiré");
-    }
-}
-
-// ============ GESTION DES DONNÉES ============
-
-// Sauvegarder les données dans le wedding
+// Sauvegarder les données
 async function syncToFirebase() {
     if (!currentUser || !currentWeddingId || state.isSyncing) return;
     state.isSyncing = true;
@@ -644,7 +788,7 @@ async function syncToFirebase() {
     }
 }
 
-// Charger les données depuis Firebase
+// Charger les données
 async function loadWeddingData() {
     if (!currentWeddingId) return;
     
@@ -675,7 +819,7 @@ async function loadWeddingData() {
     }
 }
 
-// Écouter les changements en temps réel
+// Écouter les changements
 function listenToWedding() {
     if (!currentWeddingId) return;
     
@@ -699,7 +843,6 @@ function listenToWedding() {
             renderAll();
             state.isSyncing = false;
             
-            // Afficher une notification discrète
             if (data.updatedByName && data.updatedByName !== currentUser.displayName) {
                 console.log(`📡 Mis à jour par ${data.updatedByName}`);
             }
@@ -751,23 +894,6 @@ function seedDefaultData() {
         {id:1,title:"Checklist mariage",content:"Finaliser le traiteur et les invitations."}
     ];
     state.activeNoteId = 1;
-}
-
-// ============ FONCTIONS UI ============
-
-async function openInviteModal() {
-    modal(`
-        <h2 class="text-3xl font-bold">Inviter un proche</h2>
-        <p class="text-slate-500 mt-2">Partagez votre planning avec votre conjoint(e) ou wedding planner</p>
-        <div class="space-y-4 mt-6">
-            <input id="inviteEmail" type="email" class="w-full border rounded-2xl px-4 py-3" placeholder="Email de la personne à inviter"/>
-        </div>
-        <div class="flex gap-3 mt-8">
-            <button onclick="inviteUserByEmail(document.getElementById('inviteEmail').value); closeModal();" class="bg-[var(--terracotta)] text-white px-5 py-3 rounded-2xl">Envoyer l'invitation</button>
-            <button onclick="closeModal()" class="bg-slate-200 px-5 py-3 rounded-2xl">Annuler</button>
-        </div>
-        <p class="text-xs text-slate-400 mt-4">💡 La personne doit avoir un compte Google. L'invitation sera automatiquement acceptée.</p>
-    `);
 }
 
 // ============ AUTHENTIFICATION ============
@@ -822,7 +948,7 @@ function updateUserUI(user) {
     document.getElementById("headerAvatar").src = userAvatar;
 }
 
-// ============ FONCTIONS EXISTANTES (raccourcies pour lisibilité) ============
+// ============ FONCTIONS UTILITAIRES ============
 function toggleSidebar(){ document.getElementById("sidebar").classList.toggle("-translate-x-full"); }
 function currency(n){ return Number(n || 0).toLocaleString() + " " + state.settings.currency; }
 function saveState() { syncToFirebase(); }
